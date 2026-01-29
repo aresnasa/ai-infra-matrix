@@ -1564,3 +1564,82 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		audit.POST("/cleanup", middleware.AdminMiddleware(), auditHandler.CleanupAuditLogs)
 	}
 }
+
+// initComponentPermissionHandler 初始化组件权限处理器
+// 创建所有必要的服务并组装 ComponentRegistrationService
+func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermissionHandler {
+	logger := logrus.WithField("function", "initComponentPermissionHandler")
+	logger.Info("Initializing component permission services...")
+
+	// 初始化 Gitea 服务
+	var giteaService services.GiteaService
+	if cfg.Gitea.Enabled {
+		giteaService = services.NewGiteaService(cfg)
+		logger.Info("Gitea service initialized")
+	} else {
+		logger.Info("Gitea integration disabled")
+	}
+
+	// 初始化 Nightingale 服务
+	var n9eUserService services.NightingaleUserService
+	if cfg.Nightingale.Enabled {
+		n9eUserService = services.NewNightingaleUserService(cfg)
+		logger.Info("Nightingale user service initialized")
+	} else {
+		logger.Info("Nightingale integration disabled")
+	}
+
+	// 初始化 Keycloak 服务
+	var keycloakService services.KeycloakService
+	if cfg.Keycloak.Enabled {
+		keycloakService = services.NewKeycloakService(cfg)
+		logger.Info("Keycloak service initialized")
+	} else {
+		logger.Info("Keycloak integration disabled")
+	}
+
+	// 初始化 SeaweedFS 服务
+	var seaweedFSUserService services.SeaweedFSUserService
+	// 从数据库获取对象存储配置
+	var storageConfig models.ObjectStorageConfig
+	if err := database.DB.Where("storage_type = ? AND is_default = ?", "seaweedfs", true).First(&storageConfig).Error; err == nil {
+		var err error
+		seaweedFSUserService, err = services.NewSeaweedFSUserService(&storageConfig)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to initialize SeaweedFS user service")
+		} else {
+			logger.Info("SeaweedFS user service initialized")
+		}
+	} else {
+		logger.Info("SeaweedFS configuration not found, service not initialized")
+	}
+
+	// 初始化 JupyterHub 服务
+	jupyterHubUserService := services.NewJupyterHubUserService()
+	if jupyterHubUserService != nil {
+		logger.Info("JupyterHub user service initialized")
+	}
+
+	// 初始化 SLURM 服务
+	slurmUserService := services.NewSlurmUserService(database.GetSlurmDB())
+	if slurmUserService != nil {
+		logger.Info("SLURM user service initialized")
+	}
+
+	// 创建组件注册服务
+	componentService := services.NewComponentRegistrationService(
+		cfg,
+		database.DB,
+		giteaService,
+		n9eUserService,
+		keycloakService,
+		seaweedFSUserService,
+		jupyterHubUserService,
+		slurmUserService,
+	)
+
+	logger.Info("Component registration service initialized successfully")
+
+	// 创建并返回处理器
+	return handlers.NewComponentPermissionHandler(componentService)
+}
