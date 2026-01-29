@@ -2771,6 +2771,18 @@ export default {
     createTip: 'Created invitation codes can be used for direct user registration without admin approval',
     codeGenerated: 'Generated invitation code',
     
+    // Registration settings
+    registrationSettings: 'Registration Settings',
+    requireInvitationCode: 'Require Invitation Code',
+    requireInvitationCodeDesc: 'When enabled, users must provide a valid invitation code to register',
+    disableRegistration: 'Disable Registration',
+    disableRegistrationDesc: 'When enabled, new user registration is completely disabled',
+    allowApprovalMode: 'Allow Approval Mode',
+    allowApprovalModeDesc: 'Allow users without invitation code to submit registration for approval',
+    configUpdateSuccess: 'Registration config updated',
+    configUpdateFailed: 'Failed to update registration config',
+    invitationCodeOptionalWarning: 'When invitation code is not required, users without invitation code need admin approval to login',
+    
     // Table fields
     code: 'Invitation Code',
     status: 'Status',

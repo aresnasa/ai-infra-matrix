@@ -7688,8 +7688,52 @@ create_unified_tags_for_native() {
     log_info "Unified tags: $created created, $skipped skipped, $failed failed"
 }
 
+# ==============================================================================
+# Dynamic Profile Detection - 动态 Profile 检测
+# ==============================================================================
+
+# Get all profiles defined in docker-compose.yml
+# Returns: space-separated list of profile names
+# Usage: profiles=$(get_all_compose_profiles)
+get_all_compose_profiles() {
+    local compose_file="$SCRIPT_DIR/docker-compose.yml"
+    if [[ ! -f "$compose_file" ]]; then
+        echo ""
+        return
+    fi
+    
+    # Extract all profile names from docker-compose.yml
+    # Profiles are defined as:
+    #   profiles:
+    #     - profile_name
+    local profiles=$(grep -A1 "profiles:" "$compose_file" 2>/dev/null | \
+        grep -E "^[[:space:]]*- " | \
+        sed 's/^[[:space:]]*- //' | \
+        sort -u | \
+        tr '\n' ' ')
+    
+    echo "$profiles"
+}
+
+# Build docker compose command with all profiles
+# Args: $1 = compose_cmd (optional, auto-detect if not provided)
+# Returns: compose command with all --profile flags
+# Usage: full_cmd=$(build_compose_cmd_with_all_profiles "$compose_cmd")
+build_compose_cmd_with_all_profiles() {
+    local compose_cmd="${1:-$(detect_compose_command)}"
+    local profiles=$(get_all_compose_profiles)
+    
+    local cmd="$compose_cmd"
+    for profile in $profiles; do
+        cmd="$cmd --profile $profile"
+    done
+    
+    echo "$cmd"
+}
+
 # Check if local images match the native CPU architecture
 # Returns 0 if all images match, 1 if mismatch detected
+# Now dynamically includes all profiles to check ALL services including keycloak, argocd, etc.
 check_images_architecture() {
     local native_platform=$(_detect_docker_platform)
     local native_arch="${native_platform##*/}"
@@ -7698,8 +7742,15 @@ check_images_architecture() {
     
     log_info "Checking image architectures for native platform: $native_arch"
     
-    # Get list of ai-infra images from docker-compose
-    local images=$($compose_cmd config --images 2>/dev/null | grep "ai-infra" | sort -u || true)
+    # Build compose command with ALL profiles to ensure all services are checked
+    local full_compose_cmd=$(build_compose_cmd_with_all_profiles "$compose_cmd")
+    local profiles=$(get_all_compose_profiles)
+    if [[ -n "$profiles" ]]; then
+        log_info "Including profiles: $profiles"
+    fi
+    
+    # Get list of ai-infra images from docker-compose (with all profiles)
+    local images=$($full_compose_cmd config --images 2>/dev/null | grep "ai-infra" | sort -u || true)
     
     if [[ -z "$images" ]]; then
         log_warn "No ai-infra images found in docker-compose config"
@@ -10343,19 +10394,56 @@ update_nginx() {
     update_component "nginx" "$@"
 }
 
+# Start all services with dynamic profile detection
+# By default, starts with 'ha' profile only
+# Additional profiles can be enabled via environment variables:
+#   - KEYCLOAK_ENABLED=true   -> includes keycloak profile
+#   - SAFELINE_ENABLED=true   -> includes safeline profile  
+#   - ARGOCD_ENABLED=true     -> includes argocd profile
+# Or use: ./build.sh start-all --profile keycloak --profile argocd
 start_all() {
-    log_info "Starting all services (with HA profile for SaltStack multi-master)..."
+    log_info "Starting all services..."
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
         exit 1
     fi
     
+    # 【动态Profile检测】检测所有可用的 profiles
+    local all_profiles=$(get_all_compose_profiles)
+    log_info "Available profiles in docker-compose.yml: $all_profiles"
+    
+    # 【构建启动 profiles 列表】
+    # 默认只启用 ha profile（SaltStack 高可用）
+    local start_profiles=("ha")
+    
+    # 根据环境变量动态添加可选 profiles
+    if [[ "${KEYCLOAK_ENABLED:-false}" == "true" ]]; then
+        start_profiles+=("keycloak")
+        log_info "  + keycloak profile enabled (KEYCLOAK_ENABLED=true)"
+    fi
+    if [[ "${SAFELINE_ENABLED:-false}" == "true" ]]; then
+        start_profiles+=("safeline")
+        log_info "  + safeline profile enabled (SAFELINE_ENABLED=true)"
+    fi
+    if [[ "${ARGOCD_ENABLED:-false}" == "true" ]]; then
+        start_profiles+=("argocd")
+        log_info "  + argocd profile enabled (ARGOCD_ENABLED=true)"
+    fi
+    
+    # 构建 profile 参数
+    local profile_args=""
+    for profile in "${start_profiles[@]}"; do
+        profile_args="$profile_args --profile $profile"
+    done
+    log_info "Active profiles for this start: ${start_profiles[*]}"
+    
     # 【环境清理】确保 Docker 环境状态一致（修复网络标签等问题）
     log_info "=== Docker Environment Check ==="
     ensure_clean_docker_state
     
     # 【架构检查】确保镜像与本机 CPU 架构匹配
+    # 注意：这里检查所有 profiles 的镜像，确保所有已构建的镜像都是正确架构
     log_info "=== Architecture Compatibility Check ==="
     if ! check_images_architecture; then
         log_error "Architecture check failed. Please rebuild images for your platform."
@@ -10392,10 +10480,11 @@ start_all() {
         
         # Use --no-build to prevent rebuilding when images already exist
         # Use --pull never to prevent checking remote registry (important for offline/intranet environments)
-        # Use --profile ha to enable SaltStack multi-master high availability
-        if $compose_cmd --profile ha up -d --no-build --pull never 2>&1; then
+        # Use dynamic profile flags
+        if $compose_cmd $profile_args up -d --no-build --pull never 2>&1; then
             success=true
-            log_info "All services started successfully (SaltStack HA enabled)."
+            log_info "All services started successfully."
+            log_info "Active profiles: ${start_profiles[*]}"
         else
             if [[ $retry_count -lt $max_retries ]]; then
                 log_warn "Failed to start services, retrying in 5 seconds..."
@@ -10414,6 +10503,16 @@ start_all() {
     sleep 3
     local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c "ai-infra" || echo "0")
     log_info "Running AI-Infra containers: $running_containers"
+    
+    # 显示如何启用可选组件的提示
+    if [[ "${KEYCLOAK_ENABLED:-false}" != "true" ]] || [[ "${SAFELINE_ENABLED:-false}" != "true" ]] || [[ "${ARGOCD_ENABLED:-false}" != "true" ]]; then
+        log_info ""
+        log_info "💡 To enable optional components, set environment variables:"
+        [[ "${KEYCLOAK_ENABLED:-false}" != "true" ]] && log_info "   KEYCLOAK_ENABLED=true ./build.sh start-all   # Enable Keycloak IAM"
+        [[ "${SAFELINE_ENABLED:-false}" != "true" ]] && log_info "   SAFELINE_ENABLED=true ./build.sh start-all   # Enable SafeLine WAF"
+        [[ "${ARGOCD_ENABLED:-false}" != "true" ]] && log_info "   ARGOCD_ENABLED=true ./build.sh start-all     # Enable ArgoCD"
+        log_info "   Or combine: KEYCLOAK_ENABLED=true ARGOCD_ENABLED=true ./build.sh start-all"
+    fi
 }
 
 # ==============================================================================
@@ -10546,7 +10645,8 @@ clean_volumes() {
     return 0
 }
 
-# Stop all project containers
+# Stop all project containers with dynamic profile detection
+# Automatically detects and stops all profile-based services
 stop_all() {
     log_info "Stopping all AI-Infra services..."
     local compose_cmd=$(detect_compose_command)
@@ -10555,11 +10655,19 @@ stop_all() {
         return 1
     fi
     
-    # 停止所有 profile 下的服务（ha, safeline 等）
-    # 需要同时指定所有可能的 profile 才能确保完全停止
-    $compose_cmd --profile ha --profile safeline down 2>/dev/null || true
+    # 【动态Profile检测】获取所有定义的 profiles
+    local all_profiles=$(get_all_compose_profiles)
+    log_info "Detected profiles: $all_profiles"
     
-    # 作为兜底，再执行不带 profile 的 down
+    # 构建包含所有 profiles 的 compose 命令
+    local full_compose_cmd=$(build_compose_cmd_with_all_profiles "$compose_cmd")
+    log_info "Stopping services with all profiles..."
+    
+    # 停止所有 profile 下的服务
+    # 使用动态检测到的所有 profiles，确保完全停止所有服务
+    $full_compose_cmd down 2>/dev/null || true
+    
+    # 作为兜底，再执行不带 profile 的 down（停止非 profile 服务）
     $compose_cmd down 2>/dev/null || true
     
     # 清理可能残留的 HA 容器
@@ -10573,6 +10681,19 @@ stop_all() {
     if [[ -n "$safeline_containers" ]]; then
         log_info "Cleaning up SafeLine containers..."
         echo "$safeline_containers" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    fi
+    
+    # 清理可能残留的 Keycloak 容器
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ai-infra-keycloak$'; then
+        log_info "Cleaning up Keycloak container..."
+        docker rm -f ai-infra-keycloak >/dev/null 2>&1 || true
+    fi
+    
+    # 清理可能残留的 ArgoCD 容器
+    local argocd_containers=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep '^ai-infra-argocd' || true)
+    if [[ -n "$argocd_containers" ]]; then
+        log_info "Cleaning up ArgoCD containers..."
+        echo "$argocd_containers" | xargs -r docker rm -f >/dev/null 2>&1 || true
     fi
     
     log_info "All services stopped."

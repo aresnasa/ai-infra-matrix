@@ -807,6 +807,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// RBAC初始化
 		admin.POST("/rbac/initialize", adminController.InitializeRBAC)
 
+		// 注册配置管理
+		admin.GET("/registration-config", userHandler.GetRegistrationConfig)
+		admin.PUT("/registration-config", userHandler.UpdateRegistrationConfig)
+
 		// 邀请码管理
 		invitationCodeHandler := handlers.NewInvitationCodeHandler()
 		invitationCodes := admin.Group("/invitation-codes")

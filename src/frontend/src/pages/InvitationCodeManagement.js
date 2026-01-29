@@ -60,6 +60,48 @@ const InvitationCodeManagement = () => {
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedCode, setSelectedCode] = useState(null);
   const [usageRecords, setUsageRecords] = useState([]);
+  
+  // 注册配置状态
+  const [registrationConfig, setRegistrationConfig] = useState({
+    require_invitation_code: true,
+    disable_registration: false,
+    allow_approval_mode: true,
+  });
+  const [configLoading, setConfigLoading] = useState(false);
+
+  // 获取注册配置
+  const fetchRegistrationConfig = useCallback(async () => {
+    try {
+      const response = await invitationCodeAPI.getRegistrationConfig();
+      if (response.data) {
+        setRegistrationConfig(response.data);
+      }
+    } catch (error) {
+      console.error('获取注册配置失败:', error);
+    }
+  }, []);
+
+  // 更新注册配置
+  const updateRegistrationConfig = async (field, value) => {
+    setConfigLoading(true);
+    try {
+      const response = await invitationCodeAPI.updateRegistrationConfig({
+        [field]: value,
+      });
+      if (response.data) {
+        setRegistrationConfig(prev => ({
+          ...prev,
+          [field]: value,
+        }));
+        message.success(t('invitationCode.configUpdateSuccess'));
+      }
+    } catch (error) {
+      console.error('更新注册配置失败:', error);
+      message.error(t('invitationCode.configUpdateFailed'));
+    } finally {
+      setConfigLoading(false);
+    }
+  };
 
   // 获取邀请码列表
   const fetchCodes = useCallback(async () => {
@@ -97,7 +139,8 @@ const InvitationCodeManagement = () => {
   useEffect(() => {
     fetchCodes();
     fetchStatistics();
-  }, [fetchCodes, fetchStatistics]);
+    fetchRegistrationConfig();
+  }, [fetchCodes, fetchStatistics, fetchRegistrationConfig]);
 
   // 创建邀请码
   const handleCreate = async (values) => {
@@ -404,6 +447,83 @@ const InvitationCodeManagement = () => {
           {t('invitationCode.description')}
         </Paragraph>
       </div>
+
+      {/* 注册配置卡片 */}
+      <Card 
+        style={{ background: isDark ? '#1f1f1f' : '#fff', marginBottom: '24px' }}
+        title={
+          <Space>
+            <KeyOutlined />
+            {t('invitationCode.registrationSettings')}
+          </Space>
+        }
+      >
+        <Row gutter={[24, 16]}>
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Text strong style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
+                  {t('invitationCode.requireInvitationCode')}
+                </Text>
+                <br />
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  {t('invitationCode.requireInvitationCodeDesc')}
+                </Text>
+              </div>
+              <Switch
+                checked={registrationConfig.require_invitation_code}
+                loading={configLoading}
+                onChange={(checked) => updateRegistrationConfig('require_invitation_code', checked)}
+              />
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Text strong style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
+                  {t('invitationCode.disableRegistration')}
+                </Text>
+                <br />
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  {t('invitationCode.disableRegistrationDesc')}
+                </Text>
+              </div>
+              <Switch
+                checked={registrationConfig.disable_registration}
+                loading={configLoading}
+                onChange={(checked) => updateRegistrationConfig('disable_registration', checked)}
+              />
+            </div>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <Text strong style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
+                  {t('invitationCode.allowApprovalMode')}
+                </Text>
+                <br />
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  {t('invitationCode.allowApprovalModeDesc')}
+                </Text>
+              </div>
+              <Switch
+                checked={registrationConfig.allow_approval_mode}
+                loading={configLoading}
+                disabled={registrationConfig.require_invitation_code}
+                onChange={(checked) => updateRegistrationConfig('allow_approval_mode', checked)}
+              />
+            </div>
+          </Col>
+        </Row>
+        {!registrationConfig.require_invitation_code && (
+          <Alert
+            message={t('invitationCode.invitationCodeOptionalWarning')}
+            type="warning"
+            showIcon
+            style={{ marginTop: 16 }}
+          />
+        )}
+      </Card>
 
       {/* 统计卡片 */}
       {statistics && (

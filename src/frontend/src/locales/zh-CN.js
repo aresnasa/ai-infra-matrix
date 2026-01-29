@@ -2769,6 +2769,18 @@ export default {
     createTip: '创建的邀请码可用于用户注册时直接激活账户，无需管理员审批',
     codeGenerated: '生成的邀请码',
     
+    // 注册配置
+    registrationSettings: '注册设置',
+    requireInvitationCode: '强制要求邀请码',
+    requireInvitationCodeDesc: '开启后用户必须提供有效邀请码才能注册',
+    disableRegistration: '禁用注册',
+    disableRegistrationDesc: '开启后完全禁止新用户注册',
+    allowApprovalMode: '允许审批模式',
+    allowApprovalModeDesc: '允许无邀请码用户提交注册申请等待审批',
+    configUpdateSuccess: '注册配置已更新',
+    configUpdateFailed: '更新注册配置失败',
+    invitationCodeOptionalWarning: '邀请码非强制要求时，无邀请码的用户注册后需要管理员审批才能登录',
+    
     // 表格字段
     code: '邀请码',
     status: '状态',
