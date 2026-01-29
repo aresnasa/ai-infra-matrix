@@ -278,6 +278,42 @@ func (SecurityConfig) TableName() string {
 	return "security_configs"
 }
 
+// RegistrationConfig 用户注册配置
+type RegistrationConfig struct {
+	ID                       uint           `gorm:"primaryKey" json:"id"`
+	RequireInvitationCode    bool           `gorm:"default:true" json:"require_invitation_code"`         // 是否强制要求邀请码
+	DisableRegistration      bool           `gorm:"default:false" json:"disable_registration"`           // 是否禁用注册
+	AllowApprovalMode        bool           `gorm:"default:true" json:"allow_approval_mode"`             // 是否允许审批模式（无邀请码时需审批）
+	DefaultRoleTemplate      string         `gorm:"size:50;default:'user'" json:"default_role_template"` // 默认角色模板
+	InvitationCodeExpireDays int            `gorm:"default:7" json:"invitation_code_expire_days"`        // 邀请码默认过期天数
+	MaxInvitationCodeUses    int            `gorm:"default:1" json:"max_invitation_code_uses"`           // 邀请码默认最大使用次数
+	RequireEmailVerification bool           `gorm:"default:false" json:"require_email_verification"`     // 是否要求邮箱验证
+	AllowedEmailDomains      string         `gorm:"size:500" json:"allowed_email_domains,omitempty"`     // 允许的邮箱域名（逗号分隔，空表示不限制）
+	RegistrationNotice       string         `gorm:"type:text" json:"registration_notice,omitempty"`      // 注册页面公告
+	UpdatedBy                uint           `json:"updated_by,omitempty"`                                // 最后修改人ID
+	CreatedAt                time.Time      `json:"created_at"`
+	UpdatedAt                time.Time      `json:"updated_at"`
+	DeletedAt                gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// TableName 指定表名
+func (RegistrationConfig) TableName() string {
+	return "registration_configs"
+}
+
+// GetDefaultRegistrationConfig 获取默认注册配置
+func GetDefaultRegistrationConfig() *RegistrationConfig {
+	return &RegistrationConfig{
+		RequireInvitationCode:    true,
+		DisableRegistration:      false,
+		AllowApprovalMode:        true,
+		DefaultRoleTemplate:      "user",
+		InvitationCodeExpireDays: 7,
+		MaxInvitationCodeUses:    1,
+		RequireEmailVerification: false,
+	}
+}
+
 // === 预定义的 OAuth 提供商配置 ===
 
 // GetDefaultOAuthProviders 获取预定义的OAuth提供商配置模板
