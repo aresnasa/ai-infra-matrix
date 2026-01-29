@@ -365,6 +365,9 @@ func migrateTaskSchema() error {
 		// 集群级别精细权限控制表
 		&models.SlurmClusterPermission{},
 		&models.SaltstackClusterPermission{},
+		&models.KubernetesClusterPermission{},
+		&models.AnsiblePermission{},
+		&models.ComponentPermission{},
 		&models.ClusterPermissionLog{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
