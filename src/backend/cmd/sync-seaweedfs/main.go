@@ -9,10 +9,10 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 )
 
-// sync-seaweedfs 工具用于从环境变量读取 SeaweedFS 凭据，加密后写入数据库
+// sync-seaweedfs 工具用于从环境变量读取 SeaweedFS 凭据，写入数据库
+// 凭据加密由 GORM 钩子统一处理，不在此工具中手动加密
 // 使用方式: ./sync-seaweedfs
 // 环境变量:
 //   - SEAWEEDFS_ACCESS_KEY: SeaweedFS S3 Access Key
@@ -33,21 +33,18 @@ func main() {
 		log.Fatal("❌ Failed to load config:", err)
 	}
 
-	// 初始化加密服务
-	if err := utils.InitEncryptionService(cfg.EncryptionKey); err != nil {
-		log.Fatal("❌ Failed to initialize encryption service:", err)
-	}
-	encryptionService := utils.GetEncryptionService()
-	if encryptionService == nil {
-		log.Fatal("❌ Encryption service not available")
-	}
-	log.Println("✅ Encryption service initialized")
-
-	// 连接数据库
+	// 连接数据库（会自动初始化加密服务和注册 GORM 钩子）
 	if err := database.Connect(cfg); err != nil {
 		log.Fatal("❌ Failed to connect to database:", err)
 	}
 	log.Println("✅ Database connected")
+
+	// 检查加密服务是否可用
+	if database.CryptoService != nil {
+		log.Println("✅ Encryption service initialized (GORM hooks will handle encryption)")
+	} else {
+		log.Println("⚠️  Encryption service not available, credentials will be stored unencrypted")
+	}
 
 	// 从环境变量读取 SeaweedFS 配置
 	accessKey := os.Getenv("SEAWEEDFS_ACCESS_KEY")
@@ -75,19 +72,6 @@ func main() {
 	filerURL := fmt.Sprintf("http://%s:%s", filerHost, filerPort)
 	masterURL := fmt.Sprintf("http://%s:%s", masterHost, masterPort)
 
-	// 加密凭据
-	log.Println("🔒 Encrypting credentials...")
-	encryptedAccessKey, err := encryptionService.Encrypt(accessKey)
-	if err != nil {
-		log.Fatal("❌ Failed to encrypt access key:", err)
-	}
-
-	encryptedSecretKey, err := encryptionService.Encrypt(secretKey)
-	if err != nil {
-		log.Fatal("❌ Failed to encrypt secret key:", err)
-	}
-	log.Println("✅ Credentials encrypted")
-
 	// 查找现有的 SeaweedFS 配置
 	var existingConfig models.ObjectStorageConfig
 	err = database.DB.Where("type = ? AND deleted_at IS NULL", "seaweedfs").First(&existingConfig).Error
@@ -96,20 +80,19 @@ func main() {
 		// 配置已存在，更新
 		log.Printf("📝 Updating existing SeaweedFS configuration (ID: %d)", existingConfig.ID)
 
+		// 更新配置字段（明文凭据，GORM 钩子会自动加密）
 		now := time.Now()
-		updates := map[string]interface{}{
-			"endpoint":    s3Endpoint,
-			"filer_url":   filerURL,
-			"master_url":  masterURL,
-			"region":      region,
-			"access_key":  encryptedAccessKey,
-			"secret_key":  encryptedSecretKey,
-			"status":      "unknown",
-			"last_tested": &now,
-			"updated_at":  now,
-		}
+		existingConfig.Endpoint = s3Endpoint
+		existingConfig.FilerURL = filerURL
+		existingConfig.MasterURL = masterURL
+		existingConfig.Region = region
+		existingConfig.AccessKey = accessKey
+		existingConfig.SecretKey = secretKey
+		existingConfig.Status = "unknown"
+		existingConfig.LastTested = &now
 
-		if err := database.DB.Model(&existingConfig).Updates(updates).Error; err != nil {
+		// 使用 Save 触发 GORM 钩子进行加密
+		if err := database.DB.Save(&existingConfig).Error; err != nil {
 			log.Fatal("❌ Failed to update configuration:", err)
 		}
 		log.Printf("✅ SeaweedFS configuration updated (ID: %d)", existingConfig.ID)
@@ -118,6 +101,7 @@ func main() {
 		// 配置不存在，创建新配置
 		log.Println("📝 Creating new SeaweedFS configuration...")
 
+		// 创建配置（明文凭据，GORM 钩子会自动加密）
 		newConfig := &models.ObjectStorageConfig{
 			Name:        "SeaweedFS (Default)",
 			Type:        "seaweedfs",
@@ -125,13 +109,13 @@ func main() {
 			FilerURL:    filerURL,
 			MasterURL:   masterURL,
 			Region:      region,
-			AccessKey:   encryptedAccessKey,
-			SecretKey:   encryptedSecretKey,
+			AccessKey:   accessKey,
+			SecretKey:   secretKey,
 			SSLEnabled:  false,
 			Timeout:     30,
 			IsActive:    true,
 			Status:      "unknown",
-			Description: "Auto-configured SeaweedFS storage (encrypted)",
+			Description: "Auto-configured SeaweedFS storage",
 			CreatedBy:   1, // admin user
 		}
 
@@ -144,7 +128,7 @@ func main() {
 	log.Println("")
 	log.Println("===================================")
 	log.Println("✅ SeaweedFS credentials sync completed!")
-	log.Println("   Credentials are stored encrypted in the database.")
+	log.Println("   Credentials are encrypted by GORM hooks and stored securely.")
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

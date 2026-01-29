@@ -454,6 +454,9 @@ func (h *UserHandler) completeLogin(c *gin.Context, user *models.User) {
 		// 会话创建失败不阻止登录，只记录错误
 	}
 
+	// 将角色信息填充到用户对象中，前端需要用于权限判断
+	user.Roles = roles
+
 	response := models.LoginResponse{
 		Token:     token,
 		User:      *user,
