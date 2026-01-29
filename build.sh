@@ -9831,6 +9831,125 @@ pre_deployment_safety_check() {
 # Component Update Functions - 组件更新函数
 # ==============================================================================
 
+# Get the expected image version from docker-compose.yml for a specific component
+# Usage: get_compose_image_version <component>
+# Returns: version string (e.g., "v0.3.8") or empty if not found
+get_compose_image_version() {
+    local component="$1"
+    local compose_file="${COMPOSE_FILE:-docker-compose.yml}"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        echo ""
+        return 1
+    fi
+    
+    # Search for image: ai-infra-<component>:<version> pattern
+    # Handle both with and without PRIVATE_REGISTRY prefix
+    local version=""
+    version=$(grep -E "image:.*ai-infra-${component}:" "$compose_file" 2>/dev/null | \
+              head -1 | \
+              sed -E 's/.*ai-infra-'"${component}"':([^ ]+).*/\1/' | \
+              tr -d ' ')
+    
+    echo "$version"
+}
+
+# Verify image version consistency between local images and docker-compose.yml
+# Usage: verify_image_version_consistency <component> [--fix]
+# Returns: 0 if consistent, 1 if mismatch found
+verify_image_version_consistency() {
+    local component="$1"
+    local fix_mode="${2:-}"
+    local compose_version=$(get_compose_image_version "$component")
+    
+    if [[ -z "$compose_version" ]]; then
+        log_warn "Cannot determine version for $component from docker-compose.yml"
+        return 1
+    fi
+    
+    local base_image="ai-infra-$component"
+    local expected_image="$base_image:$compose_version"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        expected_image="$PRIVATE_REGISTRY/$expected_image"
+    fi
+    
+    # Check if expected image exists
+    if docker image inspect "$expected_image" >/dev/null 2>&1; then
+        log_info "  ✓ Image version consistent: $expected_image"
+        return 0
+    fi
+    
+    # Image doesn't exist with expected tag, check for alternatives
+    log_warn "  ⚠ Expected image not found: $expected_image"
+    
+    # Look for other versions of this component
+    local available_versions=$(docker images --format '{{.Repository}}:{{.Tag}}' | \
+                               grep -E "^(${PRIVATE_REGISTRY})?${base_image}:" | \
+                               sort -V)
+    
+    if [[ -n "$available_versions" ]]; then
+        log_info "  Available versions:"
+        echo "$available_versions" | while read ver; do
+            log_info "    - $ver"
+        done
+        
+        if [[ "$fix_mode" == "--fix" ]]; then
+            # Find the latest available version and tag it
+            local latest_available=$(echo "$available_versions" | tail -1)
+            if [[ -n "$latest_available" ]]; then
+                log_info "  → Auto-fixing: tagging $latest_available as $expected_image"
+                if docker tag "$latest_available" "$expected_image"; then
+                    log_info "  ✓ Fixed: $latest_available → $expected_image"
+                    return 0
+                else
+                    log_error "  ✗ Failed to tag image"
+                    return 1
+                fi
+            fi
+        fi
+    else
+        log_warn "  No local images found for $base_image"
+    fi
+    
+    return 1
+}
+
+# Ensure the built image is tagged with the version specified in docker-compose.yml
+# This ensures version consistency between build output and deployment config
+# Usage: ensure_compose_version_tag <component> <built_image>
+# Returns: 0 on success, 1 on failure
+ensure_compose_version_tag() {
+    local component="$1"
+    local built_image="$2"
+    local compose_version=$(get_compose_image_version "$component")
+    
+    if [[ -z "$compose_version" ]]; then
+        log_warn "Cannot determine version for $component from docker-compose.yml, skipping version sync"
+        return 0
+    fi
+    
+    local target_image="ai-infra-$component:$compose_version"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        target_image="$PRIVATE_REGISTRY/$target_image"
+    fi
+    
+    # Skip if source and target are the same
+    if [[ "$built_image" == "$target_image" ]]; then
+        log_info "  ✓ Image already has correct version tag: $target_image"
+        return 0
+    fi
+    
+    # Tag the built image with the compose version
+    log_info "  → Syncing to docker-compose version: $built_image → $target_image"
+    if docker tag "$built_image" "$target_image"; then
+        log_info "  ✓ Version tag synced: $target_image"
+        return 0
+    else
+        log_error "  ✗ Failed to sync version tag"
+        return 1
+    fi
+}
+
 # Update a single component: build -> tag -> restart
 # Usage: update_component <component> [--force] [--no-restart]
 # Examples:
@@ -10000,6 +10119,11 @@ update_component() {
     # Verify final image
     local final_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
     log_info "  ✓ Image ready: $image_name (ID: $final_id)"
+    
+    # Step 3.5: Sync image to docker-compose.yml version (version consistency check)
+    # This ensures the built image is also tagged with the version in docker-compose.yml
+    log_info "  → Checking docker-compose.yml version consistency..."
+    ensure_compose_version_tag "$component" "$image_name"
     
     # Step 4 (Backend only): Sync SeaweedFS credentials BEFORE restart
     # This ensures backend starts with correct credentials
@@ -11937,6 +12061,62 @@ case "$COMMAND" in
             exit 1
         fi
         update_components "${shift_args[@]}"
+        ;;
+    check-versions|verify-versions)
+        # Check version consistency between local images and docker-compose.yml
+        # Usage: ./build.sh check-versions [--fix]
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "🔍 Checking image version consistency with docker-compose.yml"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        fix_mode=""
+        [[ "$ARG2" == "--fix" ]] && fix_mode="--fix"
+        
+        # List of components to check
+        components=(
+            "frontend"
+            "backend"
+            "backend-init"
+            "nginx"
+            "jupyterhub"
+            "singleuser"
+            "saltstack"
+            "slurm-master"
+            "gitea"
+            "apphub"
+            "nightingale"
+            "keycloak"
+            "argocd"
+        )
+        
+        consistent=0
+        inconsistent=0
+        
+        for comp in "${components[@]}"; do
+            compose_ver=$(get_compose_image_version "$comp")
+            if [[ -z "$compose_ver" ]]; then
+                continue  # Skip components not in docker-compose.yml
+            fi
+            
+            log_info ""
+            log_info "Component: $comp (expected: $compose_ver)"
+            if verify_image_version_consistency "$comp" "$fix_mode"; then
+                ((consistent++))
+            else
+                ((inconsistent++))
+            fi
+        done
+        
+        log_info ""
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if [[ $inconsistent -eq 0 ]]; then
+            log_info "✅ All $consistent components have consistent versions"
+        else
+            log_warn "⚠️  $inconsistent component(s) have version inconsistencies"
+            log_info "   Run with --fix to auto-tag latest available images"
+            log_info "   Example: $0 check-versions --fix"
+        fi
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         ;;
     db-check)
         check_postgres_has_data "${ARG2:-ai_infra}"
