@@ -12,7 +12,7 @@
 
 ## 🚀 Live Demo
 
-🌐 **Demo URL**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+🌐 **Demo URL**: [https://ai-infra-matrix.top](https://ai-infra-matrix.top)
 
 Welcome developers to try out the platform features! The demo environment is periodically reset, please do not store important data.
 
