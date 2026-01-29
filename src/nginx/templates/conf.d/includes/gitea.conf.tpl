@@ -77,12 +77,32 @@
     location = /gitea/ {
         access_log /var/log/nginx/gitea_root_access.log authdebug;
         
+        # SSO认证：通过auth_request获取当前登录用户信息
+        auth_request /__auth/verify;
+        auth_request_set $auth_user $upstream_http_x_user;
+        auth_request_set $auth_email $upstream_http_x_email;
+        auth_request_set $auth_user_webauth $upstream_http_x_webauth_user;
+        auth_request_set $auth_email_webauth $upstream_http_x_webauth_email;
+        
+        # 认证失败时的处理
+        error_page 401 403 = @gitea_root_auth_failure;
+        
+        # 设置用户信息头（优先使用WEBAUTH格式）
+        set $user_header $auth_user_webauth;
+        if ($user_header = "") { set $user_header $auth_user; }
+        set $email_header $auth_email_webauth;
+        if ($email_header = "") { set $email_header $auth_email; }
+        
         # 添加调试信息
         add_header X-Debug-Cookie-Value "$cookie_ai_infra_token" always;
         add_header X-Debug-Has-Token "$cookie_ai_infra_token" always;
         add_header X-Debug-SSO-Action "gitea_root_direct_proxy" always;
+        add_header X-Debug-Auth-User "$auth_user" always;
+        add_header X-Debug-Auth-Email "$auth_email" always;
+        add_header X-Debug-User-Header-Final "$user_header" always;
+        add_header X-Debug-Email-Header-Final "$email_header" always;
         
-        # 直接代理到Gitea主页，使用SSO硬编码映射
+        # 直接代理到Gitea主页，使用动态用户信息
         rewrite ^/gitea/$ / break;
         proxy_pass http://gitea:3000;
         proxy_set_header Host $http_host;
@@ -96,12 +116,12 @@
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
 
-        # 简化的SSO用户信息注入
-        proxy_set_header X-WEBAUTH-USER "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header X-WEBAUTH-EMAIL "{{GITEA_ADMIN_EMAIL}}";
-        proxy_set_header X-Forwarded-User "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header Remote-User "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header X-User "{{GITEA_ALIAS_ADMIN_TO}}";
+        # SSO用户信息注入（使用动态获取的用户信息）
+        proxy_set_header X-WEBAUTH-USER $user_header;
+        proxy_set_header X-WEBAUTH-EMAIL $email_header;
+        proxy_set_header X-Forwarded-User $user_header;
+        proxy_set_header Remote-User $user_header;
+        proxy_set_header X-User $user_header;
 
         # Frame相关头设置
         proxy_hide_header Content-Security-Policy;
@@ -118,9 +138,9 @@
         expires -1;
         
         # 调试信息
-        add_header X-Debug-SSO-User "{{GITEA_ALIAS_ADMIN_TO}}" always;
-        add_header X-Debug-SSO-Email "{{GITEA_ADMIN_EMAIL}}" always;
-        add_header X-Debug-SSO-Method "env_var_mapping_root" always;
+        add_header X-Debug-SSO-User "$user_header" always;
+        add_header X-Debug-SSO-Email "$email_header" always;
+        add_header X-Debug-SSO-Method "dynamic_auth_request_root" always;
     }
 
     # /gitea/根路径认证失败处理
@@ -143,6 +163,23 @@
     # Gitea 反向代理 + SSO 注入（子路径全部走这里，顶层 /gitea 仍由前端渲染）
     location ^~ /gitea/ {
         access_log /var/log/nginx/gitea_access.log authdebug;
+        
+        # SSO认证：通过auth_request获取当前登录用户信息
+        auth_request /__auth/verify;
+        auth_request_set $auth_user $upstream_http_x_user;
+        auth_request_set $auth_email $upstream_http_x_email;
+        auth_request_set $auth_user_webauth $upstream_http_x_webauth_user;
+        auth_request_set $auth_email_webauth $upstream_http_x_webauth_email;
+        
+        # 认证失败时的处理
+        error_page 401 403 = @gitea_auth_failure;
+        
+        # 设置用户信息头（优先使用WEBAUTH格式）
+        set $user_header $auth_user_webauth;
+        if ($user_header = "") { set $user_header $auth_user; }
+        set $email_header $auth_email_webauth;
+        if ($email_header = "") { set $email_header $auth_email; }
+        
         rewrite ^/gitea(/.*)$ $1 break;
         proxy_pass http://gitea:3000;
         proxy_set_header Host $http_host;
@@ -156,13 +193,12 @@
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
 
-        # 简化的SSO用户信息注入
-        # 使用环境变量配置的管理员用户映射，确保SSO登录状态同步
-        proxy_set_header X-WEBAUTH-USER "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header X-WEBAUTH-EMAIL "{{GITEA_ADMIN_EMAIL}}";
-        proxy_set_header X-Forwarded-User "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header Remote-User "{{GITEA_ALIAS_ADMIN_TO}}";
-        proxy_set_header X-User "{{GITEA_ALIAS_ADMIN_TO}}";
+        # SSO用户信息注入（使用动态获取的用户信息）
+        proxy_set_header X-WEBAUTH-USER $user_header;
+        proxy_set_header X-WEBAUTH-EMAIL $email_header;
+        proxy_set_header X-Forwarded-User $user_header;
+        proxy_set_header Remote-User $user_header;
+        proxy_set_header X-User $user_header;
 
         proxy_hide_header Content-Security-Policy;
         proxy_hide_header Content-Security-Policy-Report-Only;
@@ -178,9 +214,9 @@
         expires -1;
         
         # 调试信息
-        add_header X-Debug-SSO-User "{{GITEA_ALIAS_ADMIN_TO}}" always;
-        add_header X-Debug-SSO-Email "{{GITEA_ADMIN_EMAIL}}" always;
-        add_header X-Debug-SSO-Method "env_var_mapping" always;
+        add_header X-Debug-SSO-User "$user_header" always;
+        add_header X-Debug-SSO-Email "$email_header" always;
+        add_header X-Debug-SSO-Method "dynamic_auth_request" always;
     }
 
     location @gitea_sso_redirect {
