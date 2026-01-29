@@ -270,14 +270,18 @@ func (s *InvitationCodeService) GetStatistics() (map[string]interface{}, error) 
 	var totalCodes int64
 	var activeCodes int64
 	var totalUsages int64
+	var expiredCodes int64
 
 	s.db.Model(&models.InvitationCode{}).Count(&totalCodes)
 	s.db.Model(&models.InvitationCode{}).Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now()).Count(&activeCodes)
 	s.db.Model(&models.InvitationCodeUsage{}).Count(&totalUsages)
+	// 统计已过期的邀请码（设置了过期时间且已过期的）
+	s.db.Model(&models.InvitationCode{}).Where("expires_at IS NOT NULL AND expires_at <= ?", time.Now()).Count(&expiredCodes)
 
 	return map[string]interface{}{
-		"total_codes":  totalCodes,
-		"active_codes": activeCodes,
-		"total_usages": totalUsages,
+		"total_codes":   totalCodes,
+		"active_codes":  activeCodes,
+		"total_usages":  totalUsages,
+		"expired_codes": expiredCodes,
 	}, nil
 }

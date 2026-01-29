@@ -412,7 +412,7 @@ const InvitationCodeManagement = () => {
             <Card style={{ background: isDark ? '#1f1f1f' : '#fff' }}>
               <Statistic
                 title={t('invitationCode.totalCodes')}
-                value={statistics.total || 0}
+                value={statistics.total_codes || 0}
                 prefix={<KeyOutlined />}
                 valueStyle={{ color: '#1890ff' }}
               />
@@ -422,7 +422,7 @@ const InvitationCodeManagement = () => {
             <Card style={{ background: isDark ? '#1f1f1f' : '#fff' }}>
               <Statistic
                 title={t('invitationCode.activeCodes')}
-                value={statistics.active || 0}
+                value={statistics.active_codes || 0}
                 prefix={<CheckCircleOutlined />}
                 valueStyle={{ color: '#52c41a' }}
               />
@@ -432,7 +432,7 @@ const InvitationCodeManagement = () => {
             <Card style={{ background: isDark ? '#1f1f1f' : '#fff' }}>
               <Statistic
                 title={t('invitationCode.usedCount')}
-                value={statistics.total_used || 0}
+                value={statistics.total_usages || 0}
                 prefix={<UserOutlined />}
                 valueStyle={{ color: '#722ed1' }}
               />
@@ -442,7 +442,7 @@ const InvitationCodeManagement = () => {
             <Card style={{ background: isDark ? '#1f1f1f' : '#fff' }}>
               <Statistic
                 title={t('invitationCode.expiredCodes')}
-                value={statistics.expired || 0}
+                value={statistics.expired_codes || 0}
                 prefix={<ClockCircleOutlined />}
                 valueStyle={{ color: '#fa8c16' }}
               />
