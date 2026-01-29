@@ -4539,6 +4539,87 @@ render_template() {
     return 0
 }
 
+# Render only Nginx configuration templates
+# This is used by update_component when updating nginx
+render_nginx_templates() {
+    log_info "Re-rendering Nginx configuration templates..."
+    
+    local nginx_template_dir="${SCRIPT_DIR}/src/nginx/templates"
+    local nginx_output_dir="${SCRIPT_DIR}/src/nginx"
+    local success_count=0
+    local fail_count=0
+    
+    if [[ ! -d "$nginx_template_dir" ]]; then
+        log_warn "Nginx template directory not found: $nginx_template_dir"
+        return 1
+    fi
+    
+    # Render main server config (HTTP)
+    local main_conf_tpl="$nginx_template_dir/conf.d/server-main.conf.tpl"
+    if [[ -f "$main_conf_tpl" ]]; then
+        local main_conf_out="$nginx_output_dir/conf.d/server-main.conf"
+        mkdir -p "$(dirname "$main_conf_out")"
+        if render_template "$main_conf_tpl" "$main_conf_out"; then
+            success_count=$((success_count + 1))
+            log_info "  ✓ Rendered server-main.conf"
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    fi
+    
+    # Render TLS server config (HTTPS)
+    local tls_conf_tpl="$nginx_template_dir/conf.d/server-main-tls.conf.tpl"
+    if [[ -f "$tls_conf_tpl" ]]; then
+        local tls_conf_out="$nginx_output_dir/conf.d/server-main-tls.conf"
+        mkdir -p "$(dirname "$tls_conf_out")"
+        if render_template "$tls_conf_tpl" "$tls_conf_out"; then
+            success_count=$((success_count + 1))
+            log_info "  ✓ Rendered server-main-tls.conf"
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    fi
+    
+    # Render includes configs (gitea.conf, jupyterhub.conf, etc.)
+    local includes_dir="$nginx_template_dir/conf.d/includes"
+    if [[ -d "$includes_dir" ]]; then
+        mkdir -p "$nginx_output_dir/conf.d/includes"
+        while IFS= read -r -d '' tpl_file; do
+            local tpl_basename=$(basename "$tpl_file")
+            local out_file="$nginx_output_dir/conf.d/includes/$(basename "${tpl_file%.tpl}")"
+            if render_template "$tpl_file" "$out_file"; then
+                success_count=$((success_count + 1))
+                log_info "  ✓ Rendered $(basename "$out_file")"
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done < <(find "$includes_dir" -name "*.tpl" -print0 2>/dev/null)
+    fi
+    
+    # Render stream.d configs (Salt Master HA)
+    local stream_dir="$nginx_template_dir/stream.d"
+    if [[ -d "$stream_dir" ]]; then
+        mkdir -p "$nginx_output_dir/stream.d"
+        while IFS= read -r -d '' tpl_file; do
+            local out_file="$nginx_output_dir/stream.d/$(basename "${tpl_file%.tpl}")"
+            if render_template "$tpl_file" "$out_file"; then
+                success_count=$((success_count + 1))
+                log_info "  ✓ Rendered $(basename "$out_file")"
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done < <(find "$stream_dir" -name "*.tpl" -print0 2>/dev/null)
+    fi
+    
+    if [[ $fail_count -gt 0 ]]; then
+        log_error "Failed to render $fail_count nginx template(s)"
+        return 1
+    fi
+    
+    log_info "  ✓ Nginx templates rendered: $success_count file(s)"
+    return 0
+}
+
 # Render all Dockerfile.tpl files in src/*/ and docker-compose.yml.tpl
 render_all_templates() {
     local force="${1:-false}"
@@ -10132,9 +10213,17 @@ update_component() {
         sync_seaweedfs_credentials
     fi
     
-    # Step 5 (or 4 for non-backend): Restart component
+    # Step 4 (Nginx only): Re-render nginx configuration templates BEFORE restart
+    # This ensures nginx gets the latest config from .env and templates
+    if [[ "$component" == "nginx" ]]; then
+        log_step "Step 4/5: Re-rendering Nginx configuration templates..."
+        render_nginx_templates
+    fi
+    
+    # Calculate restart step number based on component type
     local restart_step="4/4"
     [[ "$component" == "backend" ]] && restart_step="5/5"
+    [[ "$component" == "nginx" ]] && restart_step="5/5"
     
     if [[ "$no_restart" == "true" ]]; then
         log_step "Step $restart_step: Skipping restart (--no-restart specified)"
