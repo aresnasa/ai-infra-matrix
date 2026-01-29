@@ -8,6 +8,16 @@
 
 > 企业级AI基础设施平台 - 集成HPC调度、机器学习环境、代码协作与统一监控
 
+---
+
+## 🚀 在线试用
+
+🌐 **试用地址**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+
+欢迎开发者体验平台功能！试用环境定期重置，请勿存储重要数据。
+
+---
+
 ## 🌟 项目简介
 
 AI Infrastructure Matrix 是一个企业级HPC与AI基础设施平台，提供Slurm集群管理、JupyterHub机器学习环境、Gitea代码仓库、对象存储以及Nightingale监控系统。通过容器化架构和统一的Web管理界面，实现开箱即用的AI/HPC开发和部署解决方案。
@@ -144,9 +154,16 @@ graph TB
 
 | 组件 | 说明 |
 |------|------|
+| Keycloak | 统一身份认证 (SSO/OIDC) |
 | OpenLDAP | 用户认证目录服务 |
 | PHPLDAPAdmin | LDAP Web管理界面 |
 | KeyVault | 安全密钥分发服务 |
+
+### GitOps 与持续部署
+
+| 组件 | 说明 |
+|------|------|
+| ArgoCD | GitOps 持续部署 |
 
 ## 🚀 快速开始
 
@@ -181,7 +198,9 @@ docker compose up -d
 - 📊 **JupyterHub**: <http://localhost:8080/jupyter>
 - 🗃️ **Gitea**: <http://localhost:8080/gitea/>
 - 📈 **Nightingale**: <http://localhost:8080/n9e>
-- 📦 **SeaweedFS控制台**: <http://localhost:8080/seaweedfs/>
+- � **Keycloak**: <http://localhost:8080/auth> (可选)
+- 🚀 **ArgoCD**: <http://localhost:8080/argocd> (可选)
+- �📦 **SeaweedFS控制台**: <http://localhost:8080/seaweedfs/>
 
 默认管理员账号：`admin` / `admin123`
 
@@ -377,6 +396,34 @@ docker compose up -d
 # 为私有仓库镜像打本地标签
 ./build.sh tag-images
 ```
+
+### 组件更新命令
+
+一键更新组件（构建 → 打标签 → 重启）：
+
+```bash
+# 更新单个组件（构建 + 打标签 + 重启）
+./build.sh update backend
+./build.sh update frontend
+
+# 强制重建（不使用Docker缓存）
+./build.sh update backend --force
+
+# 同时更新多个组件
+./build.sh update backend frontend nginx
+
+# 仅构建，不重启服务
+./build.sh update backend --no-restart
+
+# 指定镜像标签版本
+./build.sh update backend --tag=v0.3.9
+```
+
+**更新流程：**
+1. 渲染模板（如果存在 `Dockerfile.tpl`）
+2. 构建组件镜像
+3. 验证镜像标签
+4. 重启服务（停止 → 删除容器 → 启动）
 
 ### 数据库安全命令
 

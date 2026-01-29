@@ -63,6 +63,27 @@ server {
     access_log /var/log/nginx/access.log main;
     error_log /var/log/nginx/error.log warn;
 
+    # ========== 安全规则：阻止敏感文件/路径访问 ==========
+    # 阻止 .env、.git 等敏感配置文件
+    location ~ /\.(env|git|svn|hg|bzr|DS_Store|htaccess|htpasswd)(/|$) {
+        deny all;
+        return 404;
+    }
+    
+    # 阻止敏感配置/备份文件
+    location ~* \.(sql|bak|backup|old|orig|save|swp|config|conf|cfg|ini|log|yaml|yml|toml|json)$ {
+        # 排除合法的 API 路径
+        if ($uri !~ "^/api/") {
+            return 404;
+        }
+    }
+    
+    # 阻止常见敏感路径
+    location ~ ^/(dump|backup|config|private|secret|admin\.php|wp-admin|\.well-known/acme-challenge) {
+        # .well-known/acme-challenge 用于 SSL 证书验证，可按需放行
+        return 404;
+    }
+
     # 定义基础变量
     set $external_scheme "{{EXTERNAL_SCHEME}}";
     set $external_host "{{EXTERNAL_HOST}}";
@@ -106,6 +127,9 @@ server {
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
     include /etc/nginx/conf.d/includes/seaweedfs.conf;
+    include /etc/nginx/conf.d/includes/kafka-ui.conf;
+    include /etc/nginx/conf.d/includes/keycloak.conf;
+    include /etc/nginx/conf.d/includes/argocd.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
@@ -152,7 +176,7 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # 后端 API 代理 + CORS
+    # 后端 API 代理 + CORS（安全配置 - 只允许特定来源）
     location /api/ {
         proxy_pass http://backend/api/;
         proxy_set_header Host $http_host;
@@ -163,15 +187,26 @@ server {
         proxy_set_header X-External-Host $external_host;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Cookie $http_cookie;
-        set $cors_origin "*";
-        if ($http_origin ~ ^https?://(.*\\.)?(localhost|[\\d\\.]+)(:\\d+)?$) { set $cors_origin $http_origin; }
+        
+        # 安全的 CORS 配置 - 只允许特定来源
+        set $cors_origin "";
+        # 允许主域名
+        if ($http_origin = "https://ai-infra-matrix.top") { set $cors_origin $http_origin; }
+        if ($http_origin = "https://www.ai-infra-matrix.top") { set $cors_origin $http_origin; }
+        # 允许本地开发环境
+        if ($http_origin ~ "^https?://localhost(:\\d+)?$") { set $cors_origin $http_origin; }
+        if ($http_origin ~ "^https?://127\\.0\\.0\\.1(:\\d+)?$") { set $cors_origin $http_origin; }
+        # 允许内网开发环境（可选，根据需要启用）
+        # if ($http_origin ~ "^https?://192\\.168\\.") { set $cors_origin $http_origin; }
+        
+        # 只有匹配的来源才设置 CORS 头
         add_header Access-Control-Allow-Origin $cors_origin always;
-        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
         add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-External-Host" always;
         add_header Access-Control-Allow-Credentials "true" always;
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin $cors_origin always;
-            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
             add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-External-Host" always;
             add_header Access-Control-Allow-Credentials "true" always;
             return 204;

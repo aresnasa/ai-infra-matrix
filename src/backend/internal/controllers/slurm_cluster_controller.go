@@ -505,7 +505,8 @@ func (c *SlurmClusterController) StreamDeploymentProgress(ctx *gin.Context) {
 	ctx.Header("Content-Type", "text/event-stream")
 	ctx.Header("Cache-Control", "no-cache")
 	ctx.Header("Connection", "keep-alive")
-	ctx.Header("Access-Control-Allow-Origin", "*")
+	// 安全的CORS设置 - SSE流只允许同源访问，CORS由全局中间件处理
+	// ctx.Header("Access-Control-Allow-Origin", "*") // 已移除不安全配置
 
 	// 创建取消上下文
 	ctx.Request = ctx.Request.WithContext(context.WithValue(ctx.Request.Context(), "client", ctx.Writer))

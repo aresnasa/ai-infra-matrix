@@ -52,6 +52,10 @@ import {
   WindowsOutlined,
   GitlabOutlined,
   ArrowLeftOutlined,
+  EnvironmentOutlined,
+  CompassOutlined,
+  InfoCircleOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { securityAPI } from '../../services/api';
@@ -110,12 +114,28 @@ const SecuritySettings = () => {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPagination, setAuditPagination] = useState({ current: 1, pageSize: 10, total: 0 });
 
+  // 疑似攻击IP状态
+  const [suspiciousIPs, setSuspiciousIPs] = useState([]);
+  const [suspiciousIPsLoading, setSuspiciousIPsLoading] = useState(false);
+  const [suspiciousIPsPagination, setSuspiciousIPsPagination] = useState({ current: 1, pageSize: 10, total: 0 });
+  const [loginStats, setLoginStats] = useState(null);
+  const [lockedAccounts, setLockedAccounts] = useState([]);
+  const [lockedAccountsLoading, setLockedAccountsLoading] = useState(false);
+
+  // 客户端信息状态
+  const [clientInfo, setClientInfo] = useState(null);
+  const [clientInfoLoading, setClientInfoLoading] = useState(false);
+  const [geoIPLookupIP, setGeoIPLookupIP] = useState('');
+  const [geoIPLookupResult, setGeoIPLookupResult] = useState(null);
+  const [geoIPLookupLoading, setGeoIPLookupLoading] = useState(false);
+
   // 加载数据
   useEffect(() => {
     fetchBlacklist();
     fetchWhitelist();
     fetch2FAStatus();
     fetchOAuthProviders();
+    fetchClientInfo();
     fetchSecurityConfig();
   }, []);
 
@@ -129,6 +149,49 @@ const SecuritySettings = () => {
       message.error(t('security.fetchBlacklistFailed') || '获取 IP 黑名单失败');
     } finally {
       setBlacklistLoading(false);
+    }
+  };
+
+  // ==================== 客户端信息 ====================
+  const fetchClientInfo = async () => {
+    setClientInfoLoading(true);
+    try {
+      const res = await securityAPI.getClientInfo();
+      if (res.data?.success) {
+        setClientInfo(res.data.data);
+      }
+    } catch (error) {
+      console.error('获取客户端信息失败:', error);
+    } finally {
+      setClientInfoLoading(false);
+    }
+  };
+
+  const handleGeoIPLookup = async () => {
+    if (!geoIPLookupIP) {
+      message.warning(t('security.enterIPToLookup') || '请输入要查询的 IP 地址');
+      return;
+    }
+    setGeoIPLookupLoading(true);
+    try {
+      const res = await securityAPI.lookupGeoIP(geoIPLookupIP);
+      if (res.data?.success) {
+        setGeoIPLookupResult(res.data.data);
+      }
+    } catch (error) {
+      message.error(t('security.geoipLookupFailed') || 'GeoIP 查询失败');
+    } finally {
+      setGeoIPLookupLoading(false);
+    }
+  };
+
+  // 获取风险等级标签颜色
+  const getRiskLevelColor = (level) => {
+    switch (level) {
+      case 'high': return 'red';
+      case 'medium': return 'orange';
+      case 'low': return 'green';
+      default: return 'default';
     }
   };
 
@@ -534,6 +597,207 @@ const SecuritySettings = () => {
     }
   };
 
+  // ==================== 疑似攻击IP ====================
+  const fetchSuspiciousIPs = async (page = 1, pageSize = 10) => {
+    setSuspiciousIPsLoading(true);
+    try {
+      const res = await securityAPI.getIPStats({ page, page_size: pageSize, min_risk_score: 30, order_by_risk: true });
+      setSuspiciousIPs(res.data?.data || []);
+      setSuspiciousIPsPagination({
+        current: page,
+        pageSize: pageSize,
+        total: res.data?.total || 0,
+      });
+    } catch (error) {
+      message.error(t('security.fetchSuspiciousIPsFailed') || '获取疑似攻击IP列表失败');
+    } finally {
+      setSuspiciousIPsLoading(false);
+    }
+  };
+
+  const fetchLoginStats = async () => {
+    try {
+      const res = await securityAPI.getLoginStatsSummary({ hours: 24 });
+      setLoginStats(res.data?.data || res.data);
+    } catch (error) {
+      // 静默处理
+    }
+  };
+
+  const fetchLockedAccounts = async () => {
+    setLockedAccountsLoading(true);
+    try {
+      const res = await securityAPI.getLockedAccounts({ page: 1, page_size: 100 });
+      setLockedAccounts(res.data?.data || []);
+    } catch (error) {
+      // 静默处理
+    } finally {
+      setLockedAccountsLoading(false);
+    }
+  };
+
+  const handleUnlockAccount = async (username) => {
+    try {
+      await securityAPI.unlockAccount(username);
+      message.success(t('security.unlockSuccess') || '解锁成功');
+      fetchLockedAccounts();
+    } catch (error) {
+      message.error(t('security.unlockFailed') || '解锁失败');
+    }
+  };
+
+  const handleBlockIP = async (ip) => {
+    try {
+      await securityAPI.blockIP({ ip, reason: '手动封禁', duration_minutes: 1440 });
+      message.success(t('security.blockSuccess') || '封禁成功');
+      fetchSuspiciousIPs();
+    } catch (error) {
+      message.error(t('security.blockFailed') || '封禁失败');
+    }
+  };
+
+  const handleUnblockIP = async (ip) => {
+    try {
+      await securityAPI.unblockIP(ip);
+      message.success(t('security.unblockSuccess') || '解封成功');
+      fetchSuspiciousIPs();
+    } catch (error) {
+      message.error(t('security.unblockFailed') || '解封失败');
+    }
+  };
+
+  const suspiciousIPsColumns = [
+    {
+      title: 'IP',
+      dataIndex: 'ip',
+      key: 'ip',
+      render: (ip, record) => (
+        <Space>
+          <Tag icon={<GlobalOutlined />} color={record.risk_score >= 70 ? 'red' : record.risk_score >= 50 ? 'orange' : 'gold'}>
+            {ip}
+          </Tag>
+          {record.blocked_until && new Date(record.blocked_until) > new Date() && (
+            <Tag color="red">{t('security.blocked') || '已封禁'}</Tag>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: t('security.riskScore') || '风险评分',
+      dataIndex: 'risk_score',
+      key: 'risk_score',
+      render: (score) => {
+        let color = 'green';
+        if (score >= 70) color = 'red';
+        else if (score >= 50) color = 'orange';
+        else if (score >= 30) color = 'gold';
+        return (
+          <Tag color={color}>
+            {score}/100
+          </Tag>
+        );
+      },
+      sorter: (a, b) => a.risk_score - b.risk_score,
+    },
+    {
+      title: t('security.totalAttempts') || '总尝试',
+      dataIndex: 'total_attempts',
+      key: 'total_attempts',
+    },
+    {
+      title: t('security.failureCount') || '失败次数',
+      dataIndex: 'failure_count',
+      key: 'failure_count',
+      render: (count, record) => (
+        <Text type={count > 5 ? 'danger' : 'secondary'}>
+          {count} ({record.consecutive_fails} {t('security.consecutive') || '连续'})
+        </Text>
+      ),
+    },
+    {
+      title: t('security.successCount') || '成功次数',
+      dataIndex: 'success_count',
+      key: 'success_count',
+    },
+    {
+      title: t('security.lastAttempt') || '最后尝试',
+      dataIndex: 'last_attempt_at',
+      key: 'last_attempt_at',
+      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '-',
+    },
+    {
+      title: t('security.blockCount') || '封禁次数',
+      dataIndex: 'block_count',
+      key: 'block_count',
+    },
+    {
+      title: t('common.actions') || '操作',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          {record.blocked_until && new Date(record.blocked_until) > new Date() ? (
+            <Popconfirm
+              title={t('security.confirmUnblock') || '确定解封此IP？'}
+              onConfirm={() => handleUnblockIP(record.ip)}
+            >
+              <Button size="small" icon={<UnlockOutlined />}>
+                {t('security.unblock') || '解封'}
+              </Button>
+            </Popconfirm>
+          ) : (
+            <Popconfirm
+              title={t('security.confirmBlock') || '确定封禁此IP 24小时？'}
+              onConfirm={() => handleBlockIP(record.ip)}
+            >
+              <Button size="small" danger icon={<StopOutlined />}>
+                {t('security.block') || '封禁'}
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const lockedAccountsColumns = [
+    {
+      title: t('security.username') || '用户名',
+      dataIndex: 'username',
+      key: 'username',
+    },
+    {
+      title: t('security.failedCount') || '失败次数',
+      dataIndex: 'failed_login_count',
+      key: 'failed_login_count',
+      render: (count) => <Tag color="red">{count}</Tag>,
+    },
+    {
+      title: t('security.lastFailedIP') || '最后失败IP',
+      dataIndex: 'last_failed_login_ip',
+      key: 'last_failed_login_ip',
+    },
+    {
+      title: t('security.lockedUntil') || '锁定到期',
+      dataIndex: 'locked_until',
+      key: 'locked_until',
+      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '-',
+    },
+    {
+      title: t('common.actions') || '操作',
+      key: 'actions',
+      render: (_, record) => (
+        <Popconfirm
+          title={t('security.confirmUnlockAccount') || '确定解锁此账号？'}
+          onConfirm={() => handleUnlockAccount(record.username)}
+        >
+          <Button size="small" icon={<UnlockOutlined />}>
+            {t('security.unlock') || '解锁'}
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
   const auditColumns = [
     {
       title: t('security.action') || '操作',
@@ -576,6 +840,242 @@ const SecuritySettings = () => {
   ];
 
   const tabItems = [
+    {
+      key: 'clientInfo',
+      label: (
+        <span>
+          <DesktopOutlined /> {t('security.clientInfo') || '客户端信息'}
+        </span>
+      ),
+      children: (
+        <Spin spinning={clientInfoLoading}>
+          <Row gutter={[16, 16]}>
+            {/* 当前客户端信息卡片 */}
+            <Col span={24}>
+              <Card
+                title={
+                  <Space>
+                    <InfoCircleOutlined />
+                    {t('security.yourClientInfo') || '您的客户端信息'}
+                  </Space>
+                }
+                extra={
+                  <Button icon={<ReloadOutlined />} onClick={fetchClientInfo}>
+                    {t('common.refresh') || '刷新'}
+                  </Button>
+                }
+              >
+                {clientInfo ? (
+                  <Row gutter={[24, 16]}>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><GlobalOutlined /> {t('security.ipInfo') || 'IP 信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <div>
+                            <Text strong>{t('security.currentIP') || '当前 IP'}:</Text>{' '}
+                            <Tag color="blue" icon={<GlobalOutlined />}>{clientInfo.ip?.address || 'Unknown'}</Tag>
+                          </div>
+                          {clientInfo.ip?.x_forwarded_for && (
+                            <div>
+                              <Text type="secondary">X-Forwarded-For:</Text>{' '}
+                              <Text code>{clientInfo.ip.x_forwarded_for}</Text>
+                            </div>
+                          )}
+                          {clientInfo.ip?.x_real_ip && (
+                            <div>
+                              <Text type="secondary">X-Real-IP:</Text>{' '}
+                              <Text code>{clientInfo.ip.x_real_ip}</Text>
+                            </div>
+                          )}
+                          {clientInfo.ip?.cf_connecting_ip && (
+                            <div>
+                              <Text type="secondary">CF-Connecting-IP:</Text>{' '}
+                              <Text code>{clientInfo.ip.cf_connecting_ip}</Text>
+                            </div>
+                          )}
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><EnvironmentOutlined /> {t('security.geoLocation') || '地理位置'}</>}>
+                        {clientInfo.geo ? (
+                          <Space direction="vertical" style={{ width: '100%' }}>
+                            <div>
+                              <Text strong>{t('security.country') || '国家'}:</Text>{' '}
+                              <Tag>{clientInfo.geo.country || 'Unknown'} ({clientInfo.geo.country_code})</Tag>
+                            </div>
+                            {clientInfo.geo.region && (
+                              <div>
+                                <Text strong>{t('security.region') || '地区'}:</Text>{' '}
+                                {clientInfo.geo.region}
+                              </div>
+                            )}
+                            {clientInfo.geo.city && (
+                              <div>
+                                <Text strong>{t('security.city') || '城市'}:</Text>{' '}
+                                {clientInfo.geo.city}
+                              </div>
+                            )}
+                            {clientInfo.geo.isp && (
+                              <div>
+                                <Text strong>ISP:</Text>{' '}
+                                {clientInfo.geo.isp}
+                              </div>
+                            )}
+                            {clientInfo.geo.timezone && (
+                              <div>
+                                <Text strong>{t('security.timezone') || '时区'}:</Text>{' '}
+                                {clientInfo.geo.timezone}
+                              </div>
+                            )}
+                            <div>
+                              <Text strong>{t('security.riskLevel') || '风险等级'}:</Text>{' '}
+                              <Tag color={getRiskLevelColor(clientInfo.geo.risk_level)}>
+                                {clientInfo.geo.risk_level || 'unknown'}
+                              </Tag>
+                            </div>
+                            {(clientInfo.geo.is_proxy || clientInfo.geo.is_vpn || clientInfo.geo.is_tor || clientInfo.geo.is_datacenter) && (
+                              <div>
+                                <Space wrap>
+                                  {clientInfo.geo.is_proxy && <Tag color="orange">{t('security.isProxy') || '代理'}</Tag>}
+                                  {clientInfo.geo.is_vpn && <Tag color="orange">VPN</Tag>}
+                                  {clientInfo.geo.is_tor && <Tag color="red">Tor</Tag>}
+                                  {clientInfo.geo.is_datacenter && <Tag color="purple">{t('security.isDatacenter') || '数据中心'}</Tag>}
+                                </Space>
+                              </div>
+                            )}
+                          </Space>
+                        ) : (
+                          <Text type="secondary">{t('security.geoInfoUnavailable') || '地理位置信息不可用'}</Text>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><CompassOutlined /> {t('security.browserInfo') || '浏览器信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          {clientInfo.user_agent && (
+                            <div>
+                              <Text strong>User-Agent:</Text>
+                              <Paragraph ellipsis={{ rows: 2, expandable: true }} style={{ marginBottom: 0, marginTop: 4 }}>
+                                <Text code style={{ fontSize: 12 }}>{clientInfo.user_agent}</Text>
+                              </Paragraph>
+                            </div>
+                          )}
+                          {clientInfo.accept_language && (
+                            <div>
+                              <Text strong>{t('security.language') || '语言'}:</Text>{' '}
+                              <Text>{clientInfo.accept_language}</Text>
+                            </div>
+                          )}
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><CloudOutlined /> {t('security.connectionInfo') || '连接信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <div>
+                            <Text strong>{t('security.protocol') || '协议'}:</Text>{' '}
+                            <Tag color={clientInfo.scheme === 'https' ? 'green' : 'orange'}>
+                              {clientInfo.scheme?.toUpperCase() || 'HTTP'}
+                            </Tag>
+                          </div>
+                          <div>
+                            <Text strong>{t('security.host') || '主机'}:</Text>{' '}
+                            {clientInfo.host}
+                          </div>
+                          <div>
+                            <Text strong>{t('security.requestTime') || '请求时间'}:</Text>{' '}
+                            {clientInfo.request_time ? dayjs(clientInfo.request_time).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                          </div>
+                        </Space>
+                      </Card>
+                    </Col>
+                  </Row>
+                ) : (
+                  <Empty description={t('security.noClientInfo') || '无法获取客户端信息'} />
+                )}
+              </Card>
+            </Col>
+
+            {/* GeoIP 查询工具卡片 */}
+            <Col span={24}>
+              <Card
+                title={
+                  <Space>
+                    <EnvironmentOutlined />
+                    {t('security.geoipLookupTool') || 'IP 地理位置查询工具'}
+                  </Space>
+                }
+              >
+                <Space style={{ marginBottom: 16 }}>
+                  <Input
+                    placeholder={t('security.enterIPAddress') || '输入 IP 地址'}
+                    value={geoIPLookupIP}
+                    onChange={(e) => setGeoIPLookupIP(e.target.value)}
+                    onPressEnter={handleGeoIPLookup}
+                    style={{ width: 200 }}
+                  />
+                  <Button 
+                    type="primary" 
+                    icon={<GlobalOutlined />} 
+                    onClick={handleGeoIPLookup}
+                    loading={geoIPLookupLoading}
+                  >
+                    {t('security.lookup') || '查询'}
+                  </Button>
+                </Space>
+                {geoIPLookupResult && (
+                  <Card type="inner" style={{ marginTop: 16 }}>
+                    <Row gutter={[16, 8]}>
+                      <Col span={12}>
+                        <Text strong>IP:</Text> <Tag color="blue">{geoIPLookupResult.ip}</Tag>
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.country') || '国家'}:</Text> {geoIPLookupResult.country} ({geoIPLookupResult.country_code})
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.region') || '地区'}:</Text> {geoIPLookupResult.region || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.city') || '城市'}:</Text> {geoIPLookupResult.city || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>ISP:</Text> {geoIPLookupResult.isp || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>ASN:</Text> {geoIPLookupResult.asn || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.timezone') || '时区'}:</Text> {geoIPLookupResult.timezone || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.riskLevel') || '风险等级'}:</Text>{' '}
+                        <Tag color={getRiskLevelColor(geoIPLookupResult.risk_level)}>
+                          {geoIPLookupResult.risk_level || 'unknown'}
+                        </Tag>
+                      </Col>
+                      {(geoIPLookupResult.is_proxy || geoIPLookupResult.is_vpn || geoIPLookupResult.is_tor || geoIPLookupResult.is_datacenter) && (
+                        <Col span={24}>
+                          <Text strong>{t('security.flags') || '标记'}:</Text>{' '}
+                          <Space wrap>
+                            {geoIPLookupResult.is_proxy && <Tag color="orange">{t('security.isProxy') || '代理'}</Tag>}
+                            {geoIPLookupResult.is_vpn && <Tag color="orange">VPN</Tag>}
+                            {geoIPLookupResult.is_tor && <Tag color="red">Tor</Tag>}
+                            {geoIPLookupResult.is_datacenter && <Tag color="purple">{t('security.isDatacenter') || '数据中心'}</Tag>}
+                          </Space>
+                        </Col>
+                      )}
+                      <Col span={24}>
+                        <Text type="secondary">{t('security.dataSource') || '数据来源'}: {geoIPLookupResult.source}</Text>
+                      </Col>
+                    </Row>
+                  </Card>
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </Spin>
+      ),
+    },
     {
       key: 'blacklist',
       label: (
@@ -869,6 +1369,123 @@ const SecuritySettings = () => {
         </Card>
       ),
     },
+    {
+      key: 'suspicious',
+      label: (
+        <span>
+          <WarningOutlined /> {t('security.suspiciousIPs') || '疑似攻击IP'}
+        </span>
+      ),
+      children: (
+        <Card bordered={false}>
+          <Alert
+            message={t('security.suspiciousIPsDesc') || '展示风险评分较高的IP，可能存在暴力破解或恶意登录行为'}
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          
+          {/* 登录统计概览 */}
+          {loginStats && (
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.totalAttempts24h') || '24h登录尝试'} 
+                    value={loginStats.total_attempts || 0}
+                    prefix={<HistoryOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.failedLogins') || '失败次数'} 
+                    value={loginStats.failed_logins || 0}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<WarningOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.lockedAccounts') || '锁定账号'} 
+                    value={loginStats.locked_accounts || 0}
+                    valueStyle={{ color: '#faad14' }}
+                    prefix={<LockOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.blockedIPs') || '封禁IP'} 
+                    value={(loginStats.blocked_ips || 0) + (loginStats.auto_blocked_ips || 0)}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<StopOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.highRiskIPs') || '高风险IP'} 
+                    value={loginStats.high_risk_ips || 0}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<WarningOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.uniqueIPs') || '独立IP数'} 
+                    value={loginStats.unique_ips || 0}
+                    prefix={<GlobalOutlined />}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          )}
+
+          <Space style={{ marginBottom: 16 }}>
+            <Button 
+              icon={<ReloadOutlined />} 
+              onClick={() => {
+                fetchSuspiciousIPs();
+                fetchLoginStats();
+                fetchLockedAccounts();
+              }}
+            >
+              {t('common.refresh') || '刷新'}
+            </Button>
+          </Space>
+
+          <Divider orientation="left">{t('security.suspiciousIPList') || '疑似攻击IP列表'}</Divider>
+          <Table
+            loading={suspiciousIPsLoading}
+            dataSource={suspiciousIPs}
+            columns={suspiciousIPsColumns}
+            rowKey="id"
+            pagination={{
+              ...suspiciousIPsPagination,
+              onChange: (page, pageSize) => fetchSuspiciousIPs(page, pageSize),
+            }}
+          />
+
+          <Divider orientation="left">{t('security.lockedAccountsList') || '已锁定账号'}</Divider>
+          <Table
+            loading={lockedAccountsLoading}
+            dataSource={lockedAccounts}
+            columns={lockedAccountsColumns}
+            rowKey="id"
+            pagination={{ pageSize: 5 }}
+            locale={{ emptyText: <Empty description={t('security.noLockedAccounts') || '暂无锁定账号'} /> }}
+          />
+        </Card>
+      ),
+    },
   ];
 
   return (
@@ -897,6 +1514,10 @@ const SecuritySettings = () => {
           onChange={(key) => {
             if (key === 'audit') {
               fetchAuditLogs(1, 10);
+            } else if (key === 'suspicious') {
+              fetchSuspiciousIPs();
+              fetchLoginStats();
+              fetchLockedAccounts();
             }
           }}
         />

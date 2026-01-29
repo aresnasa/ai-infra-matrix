@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
@@ -235,6 +236,12 @@ func (c *AdminController) UpdateUserStatus(ctx *gin.Context) {
 		return
 	}
 
+	// 检查是否为受保护用户（如 admin），禁止禁用
+	if !req.IsActive && services.IsProtectedUser(user.Username) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "不能禁用受保护的系统用户"})
+		return
+	}
+
 	user.IsActive = req.IsActive
 	if err := c.db.Save(&user).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -286,32 +293,26 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 		return
 	}
 
-	// 检查是否为本地管理员用户
-	isLocalAdmin := user.Password != "" // 有本地密码
-	for _, role := range user.Roles {
-		if role.Name == "admin" {
-			isLocalAdmin = isLocalAdmin && true
-			break
-		}
-	}
+	// 检查是否为受保护用户（如 admin）
+	isProtected := services.IsProtectedUser(user.Username)
 
-	// 保护本地管理员账户不被禁用
-	if isLocalAdmin && !req.IsActive {
+	// 保护受保护用户不被禁用
+	if isProtected && !req.IsActive {
 		ctx.JSON(http.StatusForbidden, gin.H{
-			"error":      "不能禁用本地管理员账户，这是为了防止失去系统访问权限的安全措施",
-			"suggestion": "如需禁用此管理员，请先确保有其他活跃的管理员账户",
+			"error":      "不能禁用受保护的系统用户，这是为了防止失去系统访问权限的安全措施",
+			"suggestion": "受保护用户列表: " + strings.Join(services.ProtectedUsernames, ", "),
 		})
 		return
 	}
 
 	// 记录操作日志
 	logrus.WithFields(logrus.Fields{
-		"operator_id":    userID,
-		"target_user":    user.Username,
-		"action":         "update_status",
-		"new_status":     req.IsActive,
-		"reason":         req.Reason,
-		"is_local_admin": isLocalAdmin,
+		"operator_id":  userID,
+		"target_user":  user.Username,
+		"action":       "update_status",
+		"new_status":   req.IsActive,
+		"reason":       req.Reason,
+		"is_protected": isProtected,
 	}).Info("User status update")
 
 	user.IsActive = req.IsActive
@@ -361,6 +362,12 @@ func (c *AdminController) DeleteUser(ctx *gin.Context) {
 			return
 		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查是否为受保护用户（如 admin）
+	if services.IsProtectedUser(user.Username) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "不能删除受保护的系统用户"})
 		return
 	}
 

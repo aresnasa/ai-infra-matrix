@@ -130,6 +130,8 @@ export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
   register: (userData) => api.post('/auth/register', userData),
   validateLDAP: (credentials) => api.post('/auth/validate-ldap', credentials),
+  validateInvitationCode: (code) => api.get(`/auth/validate-invitation-code?code=${encodeURIComponent(code)}`),
+  getRegistrationConfig: () => api.get('/auth/registration-config'), // 获取注册配置
   logout: () => api.post('/auth/logout'),
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
@@ -138,6 +140,24 @@ export const authAPI = {
   updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
   // 2FA 登录验证
   verify2FALogin: (data) => api.post('/auth/verify-2fa', data),
+};
+
+// 邀请码管理API（管理员）
+export const invitationCodeAPI = {
+  // 创建邀请码
+  create: (data) => api.post('/admin/invitation-codes', data),
+  // 获取邀请码列表
+  list: (params) => api.get('/admin/invitation-codes', { params }),
+  // 获取邀请码详情
+  get: (id) => api.get(`/admin/invitation-codes/${id}`),
+  // 获取邀请码统计
+  getStatistics: () => api.get('/admin/invitation-codes/statistics'),
+  // 禁用邀请码
+  disable: (id) => api.post(`/admin/invitation-codes/${id}/disable`),
+  // 启用邀请码
+  enable: (id) => api.post(`/admin/invitation-codes/${id}/enable`),
+  // 删除邀请码
+  delete: (id) => api.delete(`/admin/invitation-codes/${id}`),
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {
@@ -987,6 +1007,24 @@ export const securityAPI = {
 
   // 安全审计日志
   getAuditLogs: (params) => api.get('/security/audit-logs', { params }),
+
+  // 登录保护管理
+  getLockedAccounts: (params) => api.get('/security/locked-accounts', { params }),
+  unlockAccount: (username) => api.post(`/security/accounts/${username}/unlock`),
+  getBlockedIPs: (params) => api.get('/security/blocked-ips', { params }),
+  blockIP: (data) => api.post('/security/block-ip', data),
+  unblockIP: (ip) => api.post(`/security/ips/${ip}/unblock`),
+  getLoginAttempts: (params) => api.get('/security/login-attempts', { params }),
+  getIPStats: (params) => api.get('/security/ip-stats', { params }),
+  getIPStatsDetail: (ip) => api.get(`/security/ip-stats/${ip}`),
+  getLoginStatsSummary: (params) => api.get('/security/login-stats/summary', { params }),
+  cleanupLoginRecords: (data) => api.post('/security/login-records/cleanup', data),
+  
+  // 客户端信息和GeoIP查询
+  getClientInfo: () => api.get('/security/client-info'),
+  lookupGeoIP: (ip) => api.get(`/security/geoip/${ip}`),
+  batchLookupGeoIP: (ips) => api.post('/security/geoip/batch', { ips }),
+  getGeoIPCacheStats: () => api.get('/security/geoip/stats'),
 };
 
 // 权限审批 API

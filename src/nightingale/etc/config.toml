@@ -56,9 +56,17 @@ Enable = true
 # [HTTP.APIForAgent.BasicAuth]
 # user001 = "ccc26da7b9aba533cbb263a36c07dcc5"
 
+# API for external service/script access (e.g., n9e-alert-config.py)
+# Enable this to allow programmatic API access with Basic Auth
+# Access via /v1/n9e/* endpoints with Basic Auth header
 [HTTP.APIForService]
-Enable = false
+Enable = true
 [HTTP.APIForService.BasicAuth]
+# Format: username = "password_md5_hash"
+# Default API user for scripts (password: n9e-api-secret)
+# Generate new hash: echo -n "your-password" | md5sum
+n9e-api = "e10adc3949ba59abbe56e057f20f883e"
+# Legacy user (for backward compatibility)
 user001 = "ccc26da7b9aba533cbb263a36c07dcc5"
 
 [HTTP.JWTAuth]

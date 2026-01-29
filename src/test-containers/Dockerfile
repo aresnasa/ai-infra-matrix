@@ -1,5 +1,7 @@
 # Ubuntu 22.04 SSH测试容器 - 用于SaltStack和SLURM客户端安装测试
-FROM ubuntu:22.04
+# 支持私有镜像仓库: UBUNTU_IMAGE 可以是 ubuntu:22.04 或 harbor.example.com/library/ubuntu:22.04
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
 
 ARG VERSION="dev"
 ARG APT_MIRROR=mirrors.aliyun.com

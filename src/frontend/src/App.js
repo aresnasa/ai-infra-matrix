@@ -141,6 +141,31 @@ const SecuritySettings = withLazyLoading(React.lazy(() => import('./pages/admin/
   loadingText: '正在加载安全管理...'
 });
 
+// 邀请码管理页面
+const InvitationCodeManagement = withLazyLoading(React.lazy(() => import('./pages/InvitationCodeManagement')), {
+  loadingText: '正在加载邀请码管理...'
+});
+
+// ArgoCD GitOps 管理页面
+const ArgoCDManagement = withLazyLoading(React.lazy(() => import('./pages/ArgoCDManagement')), {
+  loadingText: '正在加载ArgoCD管理...'
+});
+
+// ArgoCD 嵌入页面
+const ArgoCDEmbed = withLazyLoading(React.lazy(() => import('./pages/ArgoCDEmbed')), {
+  loadingText: '正在加载ArgoCD...'
+});
+
+// Keycloak 身份认证管理页面
+const KeycloakManagement = withLazyLoading(React.lazy(() => import('./pages/KeycloakManagement')), {
+  loadingText: '正在加载Keycloak管理...'
+});
+
+// Keycloak 嵌入页面
+const KeycloakEmbed = withLazyLoading(React.lazy(() => import('./pages/KeycloakEmbed')), {
+  loadingText: '正在加载Keycloak...'
+});
+
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
@@ -874,6 +899,60 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                             <SecuritySettings />
                           </Suspense>
                         </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/invitation-codes"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <InvitationCodeManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    {/* ArgoCD GitOps 管理 - SRE团队访问 */}
+                    <Route
+                      path="/argocd"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <ArgoCDManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    {/* ArgoCD 嵌入页面 - SRE团队访问 */}
+                    <Route
+                      path="/argocd-ui"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <ArgoCDEmbed />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    {/* Keycloak 身份认证管理 - SRE团队访问 */}
+                    <Route
+                      path="/keycloak"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KeycloakManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    {/* Keycloak 嵌入页面 - SRE团队访问 */}
+                    <Route
+                      path="/keycloak-ui"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KeycloakEmbed />
+                          </Suspense>
+                        </TeamProtectedRoute>
                       }
                     />
                     {/* 移除自动重定向 - 让 AuthPage 处理登录后的导航 */}

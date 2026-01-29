@@ -126,3 +126,5 @@ src/nginx/conf.d/*
 offline-images/
 multiarch-images/
 offline/
+build.sh.old1
+pentest-results

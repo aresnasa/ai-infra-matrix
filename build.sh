@@ -62,6 +62,332 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
 log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
+log_debug() { [[ "${DEBUG:-false}" == "true" ]] && echo -e "${BLUE}[DEBUG]${NC} $1"; return 0; }
+
+# ==============================================================================
+# Network Diagnostics Functions - 网络诊断函数
+# ==============================================================================
+
+# Check basic network connectivity
+# Returns: 0 if connected, 1 if disconnected
+_check_network_connectivity() {
+    local test_hosts=("8.8.8.8" "1.1.1.1" "114.114.114.114")
+    local timeout=3
+    
+    for host in "${test_hosts[@]}"; do
+        if ping -c 1 -W $timeout "$host" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Get network interface information
+_get_network_info() {
+    echo "Network Information:"
+    
+    if command -v ifconfig >/dev/null 2>&1; then
+        ifconfig | grep -E "^[a-z]|inet " || true
+    elif command -v ip >/dev/null 2>&1; then
+        ip addr show | grep -E "^[0-9]+:|inet " || true
+    else
+        echo "  (No network tools available)"
+    fi
+}
+
+# Diagnose network issues
+diagnose_network() {
+    log_error "Network connectivity issue detected!"
+    echo ""
+    log_step "Running network diagnostics..."
+    echo ""
+    
+    # Check DNS resolution
+    echo "🔍 DNS Resolution Test:"
+    if ping -c 1 -W 2 docker.io >/dev/null 2>&1; then
+        echo "  ✓ docker.io is reachable"
+    else
+        echo "  ✗ docker.io is NOT reachable"
+        echo "    - Check your internet connection"
+        echo "    - Check DNS configuration: cat /etc/resolv.conf"
+        echo "    - Try using different DNS: 8.8.8.8, 1.1.1.1, 114.114.114.114"
+    fi
+    echo ""
+    
+    # Check Docker daemon
+    echo "🐳 Docker Status:"
+    if docker info >/dev/null 2>&1; then
+        local docker_version=$(docker version --format='{{.Server.Version}}' 2>/dev/null || echo "unknown")
+        echo "  ✓ Docker daemon is running (version: $docker_version)"
+    else
+        echo "  ✗ Docker daemon is NOT running"
+        echo "    - Start Docker: docker daemon"
+        echo "    - Or start Docker Desktop on macOS/Windows"
+    fi
+    echo ""
+    
+    # Check buildx builder
+    echo "🏗️ BuildKit Builder:"
+    if docker buildx ls >/dev/null 2>&1; then
+        echo "  ✓ docker buildx is available"
+        docker buildx ls | sed 's/^/    /'
+    else
+        echo "  ✗ docker buildx is NOT available"
+    fi
+    echo ""
+    
+    # Show network interfaces
+    echo "🌐 Network Interfaces:"
+    _get_network_info | sed 's/^/    /'
+    echo ""
+    
+    # Check DNS
+    echo "🔎 DNS Servers:"
+    if [[ -f "/etc/resolv.conf" ]]; then
+        grep "^nameserver" /etc/resolv.conf | sed 's/^/    /' || echo "    (No nameservers configured)"
+    elif [[ -f "/etc/wsl.conf" ]]; then
+        echo "    (WSL2 system - DNS inherited from Windows)"
+    else
+        echo "    (Unable to check DNS configuration)"
+    fi
+    echo ""
+    
+    log_info "Recommended solutions:"
+    echo "  1. Check internet connection:  ping 8.8.8.8"
+    echo "  2. Check DNS:                  nslookup docker.io"
+    echo "  3. Check Docker network:       docker network ls"
+    echo "  4. Restart Docker:             docker restart"
+    echo "  5. Clear Docker build cache:   docker builder prune --all"
+    echo ""
+}
+
+# Test if a buildx builder can access Docker Hub registry
+# This is critical for docker-container drivers which may have network isolation issues
+# Returns: 0 if network works, 1 if network fails
+# Usage: _test_buildx_network "multiarch-builder" "linux/arm64"
+_test_buildx_network() {
+    local builder_name="$1"
+    local platform="${2:-linux/amd64}"
+    local timeout_seconds=20
+    
+    # Create a temporary build context directory with minimal Dockerfile
+    local test_dir=$(mktemp -d)
+    cat > "$test_dir/Dockerfile" << 'TESTEOF'
+FROM alpine:latest
+RUN echo "Network test passed"
+TESTEOF
+    
+    # Try to build with the specified builder
+    # Use --no-cache to ensure we actually test network connectivity
+    local result=0
+    if timeout "$timeout_seconds" docker buildx build \
+        --builder "$builder_name" \
+        --platform "$platform" \
+        --no-cache \
+        --progress=quiet \
+        "$test_dir" >/dev/null 2>&1; then
+        result=0
+    else
+        result=1
+    fi
+    
+    rm -rf "$test_dir"
+    return $result
+}
+
+# Select the best available buildx builder for the given platform
+# Intelligent builder selection for buildx
+# - For native architecture: prefer docker driver (desktop-linux) for reliable --load
+# - For cross-platform: use docker-container driver (multiarch-builder)
+# Returns: builder name via echo
+# Usage: builder=$(_select_best_builder "linux/arm64")
+_select_best_builder() {
+    local platform="${1:-linux/amd64}"
+    local arch_name="${platform##*/}"
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    # Builder names
+    local docker_driver_builder="desktop-linux"
+    local container_driver_builder="multiarch-builder"
+    
+    # =========================================================================
+    # KEY FIX: For native architecture, prefer docker driver (desktop-linux)
+    # 
+    # The docker driver's --load is more reliable, especially in parallel builds.
+    # The docker-container driver (multiarch-builder) may have issues with
+    # concurrent --load operations, causing images to not be properly loaded
+    # into the local Docker daemon.
+    # =========================================================================
+    if [[ "$arch_name" == "$native_arch" ]]; then
+        # Native architecture: use docker driver for reliable --load
+        if docker buildx inspect "$docker_driver_builder" >/dev/null 2>&1; then
+            echo "  [$arch_name] Using $docker_driver_builder (native arch, docker driver)" >&2
+            echo "$docker_driver_builder"
+            return 0
+        fi
+        # Fallback to default if desktop-linux doesn't exist
+        if docker buildx inspect "default" >/dev/null 2>&1; then
+            echo "  [$arch_name] Using default builder (native arch)" >&2
+            echo "default"
+            return 0
+        fi
+    fi
+    
+    # Cross-platform: need docker-container driver for QEMU/Rosetta emulation
+    # Check if multiarch-builder exists
+    if ! docker buildx inspect "$container_driver_builder" >/dev/null 2>&1; then
+        echo "  [$arch_name] ⚠️  $container_driver_builder not found, using $docker_driver_builder" >&2
+        echo "$docker_driver_builder"
+        return 0
+    fi
+    
+    # Test network connectivity with the preferred builder
+    # This is critical because docker-container driver may have proxy/network issues
+    # Note: Use >&2 to send logs to stderr so they don't pollute the return value
+    echo "  [$arch_name] Testing buildx network connectivity..." >&2
+    
+    if _test_buildx_network "$container_driver_builder" "$platform"; then
+        echo "  [$arch_name] ✓ Using $container_driver_builder (cross-platform, network test passed)" >&2
+        echo "$container_driver_builder"
+        return 0
+    else
+        echo "  [$arch_name] ⚠️  $container_driver_builder network test failed" >&2
+        
+        # Test fallback builder
+        if docker buildx inspect "$docker_driver_builder" >/dev/null 2>&1; then
+            if _test_buildx_network "$docker_driver_builder" "$platform"; then
+                echo "  [$arch_name] ✓ Falling back to $docker_driver_builder (network works)" >&2
+                echo "$docker_driver_builder"
+                return 0
+            fi
+        fi
+        
+        # Both failed, run full network diagnostics
+        echo "  [$arch_name] ✗ All builders failed network test" >&2
+        diagnose_network >&2
+        
+        # Return container driver builder anyway, let the actual build fail with proper error
+        echo "$container_driver_builder"
+        return 1
+    fi
+}
+
+# ==============================================================================
+# Docker 环境清理函数 - 清理可能冲突的中间配置
+# ==============================================================================
+
+# 检查并清理可能冲突的 Docker 网络
+# 如果网络存在但不是由 docker-compose 创建的，删除后让 compose 重新创建
+# 这样可以避免 "network was found but has incorrect label" 错误
+# 注意：只清理网络配置，不会影响 volume 数据
+ensure_clean_docker_network() {
+    local network_name="${1:-ai-infra-network}"
+    
+    # 检查网络是否存在
+    if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+        log_debug "Network $network_name does not exist, no cleanup needed"
+        return 0
+    fi
+    
+    # 检查网络是否有正确的 compose 标签
+    local compose_label=$(docker network inspect "$network_name" --format '{{index .Labels "com.docker.compose.network"}}' 2>/dev/null || echo "")
+    
+    if [[ -n "$compose_label" ]] && [[ "$compose_label" == "$network_name" ]]; then
+        log_debug "Network $network_name has correct compose label, no cleanup needed"
+        return 0
+    fi
+    
+    # 网络存在但标签不正确 - 需要清理
+    log_info "🧹 Cleaning up inconsistent Docker network: $network_name"
+    log_info "   (Network exists but was not created by docker-compose)"
+    
+    # 检查是否有容器连接到该网络
+    local connected_containers=$(docker network inspect "$network_name" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs || echo "")
+    
+    if [[ -n "$connected_containers" ]]; then
+        log_warn "   Containers connected to network: $connected_containers"
+        log_info "   Disconnecting containers from network..."
+        
+        # 断开所有容器与网络的连接
+        for container in $connected_containers; do
+            docker network disconnect -f "$network_name" "$container" 2>/dev/null || true
+        done
+    fi
+    
+    # 删除网络
+    if docker network rm "$network_name" >/dev/null 2>&1; then
+        log_info "   ✓ Network $network_name removed (will be recreated by docker-compose)"
+        return 0
+    else
+        log_warn "   ⚠️  Failed to remove network $network_name"
+        log_warn "   Try manually: docker network rm $network_name"
+        return 1
+    fi
+}
+
+# 清理所有可能冲突的 Docker 中间配置
+# 只清理网络和孤立容器，不会影响 volume 数据
+# 返回: 0 = 成功, 1 = 部分失败（但继续执行）
+ensure_clean_docker_state() {
+    local force="${1:-false}"
+    local had_issues=false
+    
+    log_info "🔍 Checking Docker environment for inconsistent state..."
+    
+    # 1. 清理 ai-infra 相关网络
+    for network in "ai-infra-network" "safeline-ce"; do
+        if ! ensure_clean_docker_network "$network"; then
+            had_issues=true
+        fi
+    done
+    
+    # 2. 清理孤立的 ai-infra 容器（没有对应 compose 服务的容器）
+    local orphan_containers=$(docker ps -a --filter "name=ai-infra-" --format "{{.Names}}" 2>/dev/null | sort || echo "")
+    if [[ -n "$orphan_containers" ]]; then
+        # 检查每个容器是否在 docker-compose 配置中
+        local compose_cmd=$(detect_compose_command 2>/dev/null || echo "docker compose")
+        local compose_services=$($compose_cmd config --services 2>/dev/null | sort || echo "")
+        
+        for container in $orphan_containers; do
+            # 从容器名提取服务名 (ai-infra-backend -> backend)
+            local service_name="${container#ai-infra-}"
+            
+            # 检查是否是 HA 模式的额外容器 (ai-infra-salt-master-2 等)
+            if [[ "$container" =~ -[0-9]+$ ]]; then
+                # HA 模式容器可能不在基础 compose 配置中
+                if [[ "$force" == "true" ]]; then
+                    log_info "   Removing HA orphan container: $container"
+                    docker rm -f "$container" 2>/dev/null || true
+                else
+                    log_debug "   Skipping HA container: $container (use --force to remove)"
+                fi
+            fi
+        done
+    fi
+    
+    # 3. 检查并清理悬空的 buildx builder（可能导致构建问题）
+    local buildx_builders=$(docker buildx ls --format "{{.Name}}" 2>/dev/null | grep -v "^default$\|^desktop-linux$" || echo "")
+    if [[ -n "$buildx_builders" ]] && [[ "$force" == "true" ]]; then
+        log_info "   Checking buildx builders..."
+        for builder in $buildx_builders; do
+            # 检查 builder 是否正常工作
+            if ! docker buildx inspect "$builder" >/dev/null 2>&1; then
+                log_info "   Removing broken buildx builder: $builder"
+                docker buildx rm "$builder" 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    if [[ "$had_issues" == "true" ]]; then
+        log_warn "   Some cleanup operations had issues, but continuing..."
+        return 1
+    fi
+    
+    log_info "   ✓ Docker environment is clean"
+    return 0
+}
 
 # ==============================================================================
 # 通用工具函数
@@ -234,6 +560,212 @@ is_valid_domain() {
     [[ "$addr" =~ \. ]] && return 0
     
     return 1
+}
+
+# 获取服务器的公网 IP 地址
+# 通过多个公共服务检测，返回公网 IP 或空字符串
+get_public_ip() {
+    local public_ip=""
+    local timeout_opt=""
+    
+    # 设置 curl/wget 超时选项
+    if command -v curl &> /dev/null; then
+        timeout_opt="--connect-timeout 3 -s"
+    fi
+    
+    # 尝试多个公共 IP 检测服务
+    local services=(
+        "ifconfig.me"
+        "ipinfo.io/ip"
+        "icanhazip.com"
+        "api.ipify.org"
+        "checkip.amazonaws.com"
+    )
+    
+    for service in "${services[@]}"; do
+        if command -v curl &> /dev/null; then
+            public_ip=$(curl $timeout_opt "https://$service" 2>/dev/null | tr -d '[:space:]')
+        elif command -v wget &> /dev/null; then
+            public_ip=$(wget -qO- --timeout=3 "https://$service" 2>/dev/null | tr -d '[:space:]')
+        fi
+        
+        # 验证返回的是有效 IP 格式
+        if [[ -n "$public_ip" ]] && [[ "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            log_debug "从 $service 获取到公网 IP: $public_ip"
+            echo "$public_ip"
+            return 0
+        fi
+    done
+    
+    log_debug "无法获取公网 IP"
+    return 1
+}
+
+# 解析域名获取 IP 地址
+# 参数: $1 - 域名
+# 返回: 解析到的 IP 地址，或空字符串
+resolve_domain_ip() {
+    local domain="$1"
+    local resolved_ip=""
+    
+    [[ -z "$domain" ]] && return 1
+    
+    # 方法1: 使用 dig (最可靠)
+    if command -v dig &> /dev/null; then
+        resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+    fi
+    
+    # 方法2: 使用 nslookup
+    if [[ -z "$resolved_ip" ]] && command -v nslookup &> /dev/null; then
+        resolved_ip=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+        # 备用解析方式
+        if [[ -z "$resolved_ip" ]]; then
+            resolved_ip=$(nslookup "$domain" 2>/dev/null | awk '/Name:/{found=1} found && /Address:/{print $2; exit}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        fi
+    fi
+    
+    # 方法3: 使用 host
+    if [[ -z "$resolved_ip" ]] && command -v host &> /dev/null; then
+        resolved_ip=$(host "$domain" 2>/dev/null | awk '/has address/ { print $4 }' | head -n1)
+    fi
+    
+    # 方法4: 使用 getent (Linux)
+    if [[ -z "$resolved_ip" ]] && command -v getent &> /dev/null; then
+        resolved_ip=$(getent hosts "$domain" 2>/dev/null | awk '{ print $1 }' | head -n1)
+    fi
+    
+    if [[ -n "$resolved_ip" ]]; then
+        log_debug "域名 $domain 解析到 IP: $resolved_ip"
+        echo "$resolved_ip"
+        return 0
+    fi
+    
+    log_debug "无法解析域名: $domain"
+    return 1
+}
+
+# 验证域名是否解析到指定的公网 IP
+# 参数: $1 - 域名, $2 - 期望的公网 IP (可选，默认自动检测)
+# 返回: 0 如果匹配，1 如果不匹配
+verify_domain_dns() {
+    local domain="$1"
+    local expected_ip="${2:-}"
+    
+    [[ -z "$domain" ]] && return 1
+    
+    # 如果没有提供期望的 IP，自动获取公网 IP
+    if [[ -z "$expected_ip" ]]; then
+        expected_ip=$(get_public_ip)
+        if [[ -z "$expected_ip" ]]; then
+            log_debug "无法获取公网 IP 进行验证"
+            return 1
+        fi
+    fi
+    
+    # 解析域名
+    local resolved_ip=$(resolve_domain_ip "$domain")
+    if [[ -z "$resolved_ip" ]]; then
+        log_debug "域名 $domain 无法解析"
+        return 1
+    fi
+    
+    # 比较 IP
+    if [[ "$resolved_ip" == "$expected_ip" ]]; then
+        log_debug "✅ 域名 $domain 正确解析到公网 IP $expected_ip"
+        return 0
+    else
+        log_debug "❌ 域名 $domain 解析到 $resolved_ip，不匹配期望的 $expected_ip"
+        return 1
+    fi
+}
+
+# 检测公网域名 (通过 SSL 证书或配置文件推断)
+# 用于设置 PUBLIC_HOST - 用户浏览器访问的公网地址
+# 返回: 检测到的域名，或空字符串
+detect_public_domain() {
+    local domain=""
+    
+    # 预配置的候选域名列表 (可以通过 DNS 验证自动配置)
+    # 用户可以在这里添加自己的域名，脚本会自动验证是否指向当前服务器
+    local candidate_domains=(
+        "ai-infra-matrix.top"
+        "www.ai-infra-matrix.top"
+    )
+    
+    # 方法0: 通过 DNS 解析验证候选域名 (最智能的方法)
+    # 获取当前服务器的公网 IP，然后检查候选域名是否解析到该 IP
+    log_debug "尝试通过 DNS 验证检测公网域名..."
+    local public_ip=$(get_public_ip)
+    if [[ -n "$public_ip" ]]; then
+        log_debug "检测到服务器公网 IP: $public_ip"
+        for candidate in "${candidate_domains[@]}"; do
+            if verify_domain_dns "$candidate" "$public_ip"; then
+                domain="$candidate"
+                # 注意: 使用 >&2 输出到 stderr，避免混入函数返回值
+                echo -e "${GREEN}[INFO]${NC} ✅ 通过 DNS 验证检测到域名: $domain (解析到 $public_ip)" >&2
+                echo "$domain"
+                return 0
+            fi
+        done
+    fi
+    
+    # 方法1: 从 SSL 证书读取域名 (最可靠)
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    if [[ -f "$cert_file" ]]; then
+        # 尝试从 SAN (Subject Alternative Names) 获取
+        domain=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | \
+            grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | \
+            grep -v -E '^(localhost|\*\.)' | head -n1)
+        
+        # 如果 SAN 没有，尝试从 CN 获取
+        if [[ -z "$domain" ]]; then
+            domain=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | \
+                sed -n 's/.*CN *= *\([^,]*\).*/\1/p' | \
+                grep -v -E '^(localhost|\*\.)')
+        fi
+        
+        if [[ -n "$domain" ]]; then
+            log_debug "从 SSL 证书检测到域名: $domain"
+            # 验证 SSL 证书中的域名是否也指向当前服务器
+            if [[ -n "$public_ip" ]] && verify_domain_dns "$domain" "$public_ip"; then
+                # 使用 >&2 输出到 stderr，避免混入函数返回值
+                echo -e "${GREEN}[INFO]${NC} ✅ SSL 证书域名 $domain 已验证指向当前服务器" >&2
+            fi
+        fi
+    fi
+    
+    # 方法2: 从现有 .env 文件读取 PUBLIC_HOST
+    if [[ -z "$domain" ]] && [[ -f "$ENV_FILE" ]]; then
+        local env_domain=$(grep "^PUBLIC_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [[ -n "$env_domain" ]] && [[ ! "$env_domain" =~ \$\{ ]] && is_valid_domain "$env_domain"; then
+            domain="$env_domain"
+            log_debug "从 .env 文件检测到域名: $domain"
+        fi
+    fi
+    
+    # 方法3: 从 nginx 配置中的 server_name 读取
+    if [[ -z "$domain" ]]; then
+        local nginx_conf="./src/nginx/conf.d/server-main.conf"
+        if [[ -f "$nginx_conf" ]]; then
+            domain=$(grep -E "^\s*server_name\s+" "$nginx_conf" 2>/dev/null | \
+                head -n1 | awk '{print $2}' | tr -d ';' | \
+                grep -v -E '^(localhost|_|\$)')
+            if [[ -n "$domain" ]]; then
+                log_debug "从 nginx 配置检测到域名: $domain"
+            fi
+        fi
+    fi
+    
+    # 方法4: 检测 hostname 是否像域名
+    if [[ -z "$domain" ]]; then
+        local hostname_val=$(hostname -f 2>/dev/null || hostname 2>/dev/null)
+        if is_valid_domain "$hostname_val" && [[ "$hostname_val" =~ \.[a-z]{2,}$ ]]; then
+            domain="$hostname_val"
+            log_debug "从主机名检测到域名: $domain"
+        fi
+    fi
+    
+    echo "$domain"
 }
 
 # 检测 SSL 证书域名是否与 EXTERNAL_HOST 匹配
@@ -430,9 +962,10 @@ update_env_variable() {
 
 # 同步 .env 与 .env.example
 # 功能：
-#   1. 如果 .env.prod 存在，优先复制为 .env（生产环境配置优先）
-#   2. 添加 .env.example 中新增的变量
-#   3. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
+#   1. 如果 .env.prod 存在，先将 .env.example 中新增的变量同步到 .env.prod
+#   2. 然后将 .env.prod 复制到 .env（生产环境配置优先）
+#   3. 如果没有 .env.prod，则直接同步 .env.example 到 .env
+#   4. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
@@ -444,19 +977,89 @@ sync_env_with_example() {
         return 1
     fi
     
-    # 优先使用 .env.prod（生产环境配置）
-    if [[ -f "$prod_file" ]] && [[ ! -f "$env_file" ]]; then
-        log_info "Found .env.prod, using it as .env..."
+    local missing_vars=()
+    local updated_vars=()
+    local prod_missing_vars=()
+    
+    # 检查是否存在 .env.prod（生产环境配置）
+    if [[ -f "$prod_file" ]]; then
+        log_info "Found .env.prod, syncing new variables from .env.example to .env.prod first..."
+        
+        # Step 1: 将 .env.example 中新增的变量同步到 .env.prod
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # 跳过注释和空行
+            if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+                continue
+            fi
+            
+            # 提取变量名和值
+            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                local var_name="${BASH_REMATCH[1]}"
+                local example_value="${BASH_REMATCH[2]}"
+                
+                # 防御性检查：确保变量名不为空
+                if [[ -z "$var_name" ]]; then
+                    continue
+                fi
+                
+                # 检查 .env.prod 中是否存在该变量
+                if ! grep -q "^${var_name}=" "$prod_file" 2>/dev/null; then
+                    # 变量不存在于 .env.prod，添加到文件末尾
+                    echo "${var_name}=${example_value}" >> "$prod_file"
+                    prod_missing_vars+=("$var_name")
+                else
+                    # 变量存在，只同步版本类变量 (VERSION, TAG, VER, RELEASE)
+                    if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                        local current_value
+                        current_value=$(grep "^${var_name}=" "$prod_file" | head -1 | cut -d'=' -f2-)
+                        
+                        # 如果值不同，用 example 的值更新（生产环境可能需要保持最新版本）
+                        if [[ "$current_value" != "$example_value" ]]; then
+                            # 在 .env.prod 中更新版本变量
+                            if [[ "$(uname)" == "Darwin" ]]; then
+                                sed -i '' "s|^${var_name}=.*|${var_name}=${example_value}|" "$prod_file"
+                            else
+                                sed -i "s|^${var_name}=.*|${var_name}=${example_value}|" "$prod_file"
+                            fi
+                            updated_vars+=("$var_name: $current_value → $example_value (in .env.prod)")
+                        fi
+                    fi
+                fi
+            fi
+        done < "$example_file"
+        
+        # 显示 .env.prod 同步结果
+        if [[ ${#prod_missing_vars[@]} -gt 0 ]]; then
+            log_info "Added ${#prod_missing_vars[@]} new variables to .env.prod:"
+            for var in "${prod_missing_vars[@]}"; do
+                log_info "  + $var"
+            done
+        fi
+        
+        if [[ ${#updated_vars[@]} -gt 0 ]]; then
+            log_info "Updated ${#updated_vars[@]} version variables in .env.prod:"
+            for var in "${updated_vars[@]}"; do
+                log_info "  ↻ $var"
+            done
+        fi
+        
+        # Step 2: 将 .env.prod 复制到 .env
+        log_info "Copying .env.prod to .env..."
         cp "$prod_file" "$env_file"
-        log_info "✓ Created .env from .env.prod"
-    elif [[ ! -f "$env_file" ]]; then
+        log_info "✓ .env created from .env.prod (production config preserved)"
+        
+        # 检测配置差异并警告用户
+        check_env_config_drift
+        
+        return 0
+    fi
+    
+    # 没有 .env.prod 的情况，使用原有逻辑
+    if [[ ! -f "$env_file" ]]; then
         log_info "Creating .env from .env.example..."
         cp "$example_file" "$env_file"
         return 0
     fi
-    
-    local missing_vars=()
-    local updated_vars=()
     
     # 读取 .env.example 中的所有变量，同步到 .env
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -469,6 +1072,11 @@ sync_env_with_example() {
         if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
             local var_name="${BASH_REMATCH[1]}"
             local example_value="${BASH_REMATCH[2]}"
+            
+            # 防御性检查：确保变量名不为空
+            if [[ -z "$var_name" ]]; then
+                continue
+            fi
             
             # 检查 .env 中是否存在该变量
             if ! grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
@@ -773,6 +1381,147 @@ calculate_hash() {
     fi
 }
 
+# ==============================================================================
+# AppHub 智能缓存检查
+# ==============================================================================
+# AppHub 是包分发中心，只有以下情况需要重建：
+# 1. 新增了组件（检测 src/ 目录下的服务数量变化）
+# 2. SLURM/SaltStack/Munge 版本变化（检测 tarball 文件）
+# 3. 核心构建脚本变化（nginx 配置等）
+# 4. 依赖的第三方包变化
+#
+# 不需要触发重建的情况：
+# - Dockerfile 中的注释或空格变化（不影响构建结果）
+# - 其他服务的代码变化（apphub 不依赖它们）
+# ==============================================================================
+calculate_apphub_critical_hash() {
+    local apphub_path="$1"
+    local hash_data=""
+    
+    # 1. 检测服务数量变化（新增组件时需要重建）
+    # 生成当前所有服务的列表哈希
+    local services_list=$(find "$SRC_DIR" -maxdepth 1 -type d -not -name "src" -not -name "apphub" | sort | xargs -I {} basename {} 2>/dev/null | sort | tr '\n' ',')
+    hash_data+="services:${services_list}\n"
+    
+    # 2. 检测关键 tarball 文件（SLURM、Munge 版本变化）
+    # 只检查文件名（包含版本号），不检查内容（太大）
+    local tarballs=$(find "$apphub_path" -maxdepth 1 -type f \( -name "*.tar.bz2" -o -name "*.tar.gz" -o -name "*.tar.xz" \) | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+    hash_data+="tarballs:${tarballs}\n"
+    
+    # 3. 检测 third_party 目录中的关键包
+    if [[ -d "$SCRIPT_DIR/third_party" ]]; then
+        # 检测 munge 版本
+        local munge_files=$(find "$SCRIPT_DIR/third_party/munge" -type f -name "*.tar.*" 2>/dev/null | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+        hash_data+="munge:${munge_files}\n"
+        
+        # 检测 categraf 版本
+        local categraf_files=$(find "$SCRIPT_DIR/third_party/categraf" -type f -name "*.tar.gz" 2>/dev/null | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+        hash_data+="categraf:${categraf_files}\n"
+    fi
+    
+    # 4. 检测 nginx 配置（apphub 使用 nginx 提供服务）
+    if [[ -f "$apphub_path/nginx.conf" ]]; then
+        hash_data+="$(shasum -a 256 "$apphub_path/nginx.conf" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 5. 检测关键构建参数（从 Dockerfile 中提取版本号等）
+    if [[ -f "$apphub_path/Dockerfile" ]]; then
+        # 提取关键 ARG 声明（版本号等）
+        local key_args=$(grep -E "^ARG\s+(SLURM_VERSION|SALTSTACK_VERSION|MUNGE_VERSION|UBUNTU_VERSION|ALMALINUX_VERSION|BUILD_SLURM|BUILD_SALTSTACK)=" "$apphub_path/Dockerfile" 2>/dev/null | sort | tr '\n' ',')
+        hash_data+="dockerfile_args:${key_args}\n"
+    fi
+    
+    # 6. 检测 deps.yaml 变化（定义了组件依赖关系）
+    if [[ -f "$SCRIPT_DIR/deps.yaml" ]]; then
+        hash_data+="$(shasum -a 256 "$SCRIPT_DIR/deps.yaml" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 7. 检测 images.yaml 变化（定义了镜像配置）
+    if [[ -f "$SCRIPT_DIR/config/images.yaml" ]]; then
+        hash_data+="$(shasum -a 256 "$SCRIPT_DIR/config/images.yaml" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 计算最终哈希
+    echo -e "$hash_data" | shasum -a 256 | awk '{print $1}'
+}
+
+# ==============================================================================
+# AppHub 重建必要性检查
+# ==============================================================================
+# 检查 AppHub 是否真的需要重建
+# 返回: NO_CHANGE（不需要重建）或具体的重建原因
+# ==============================================================================
+check_apphub_rebuild_necessity() {
+    local apphub_path="$SRC_DIR/apphub"
+    local reasons=()
+    local tag="${IMAGE_TAG:-latest}"
+    
+    # 首先检查镜像是否存在（检查两种命名格式）
+    local apphub_image=""
+    if docker image inspect "ai-infra-apphub:${tag}-arm64" >/dev/null 2>&1; then
+        apphub_image="ai-infra-apphub:${tag}-arm64"
+    elif docker image inspect "ai-infra-apphub:${tag}-amd64" >/dev/null 2>&1; then
+        apphub_image="ai-infra-apphub:${tag}-amd64"
+    elif docker image inspect "ai-infra-apphub:${tag}" >/dev/null 2>&1; then
+        apphub_image="ai-infra-apphub:${tag}"
+    else
+        # 镜像不存在，必须构建
+        echo "IMAGE_NOT_EXIST"
+        return 0
+    fi
+    
+    # 1. 检查是否有新增的服务组件
+    # 通过比较当前服务数量和镜像中记录的服务数量
+    local current_services=$(find "$SRC_DIR" -maxdepth 1 -type d ! -name "src" ! -name "apphub" ! -name "shared" | wc -l | tr -d ' ')
+    local image_services=$(docker image inspect "$apphub_image" --format '{{index .Config.Labels "build.services_count"}}' 2>/dev/null || echo "0")
+    if [[ "$current_services" != "$image_services" && "$image_services" != "0" ]]; then
+        reasons+=("NEW_COMPONENT:${current_services}vs${image_services}")
+    fi
+    
+    # 2. 检查 SLURM tarball 是否变化
+    local current_slurm=$(ls -1 "$apphub_path"/slurm-*.tar.bz2 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+    local image_slurm=$(docker image inspect "$apphub_image" --format '{{index .Config.Labels "build.slurm_tarball"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_slurm" && "$current_slurm" != "$image_slurm" && -n "$image_slurm" ]]; then
+        reasons+=("SLURM_VERSION:${current_slurm}")
+    fi
+    
+    # 3. 检查 Munge 版本是否变化
+    local current_munge=$(ls -1 "$SCRIPT_DIR/third_party/munge"/munge-*.tar.* 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+    local image_munge=$(docker image inspect "$apphub_image" --format '{{index .Config.Labels "build.munge_tarball"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_munge" && "$current_munge" != "$image_munge" && -n "$image_munge" ]]; then
+        reasons+=("MUNGE_VERSION:${current_munge}")
+    fi
+    
+    # 4. 检查 SaltStack 版本是否变化（从 Dockerfile ARG 中提取）
+    local current_saltstack=$(grep -E "^ARG\s+SALTSTACK_VERSION=" "$apphub_path/Dockerfile" 2>/dev/null | cut -d= -f2 || echo "")
+    local image_saltstack=$(docker image inspect "$apphub_image" --format '{{index .Config.Labels "build.saltstack_version"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_saltstack" && "$current_saltstack" != "$image_saltstack" && -n "$image_saltstack" ]]; then
+        reasons+=("SALTSTACK_VERSION:${current_saltstack}")
+    fi
+    
+    # 5. 如果镜像没有任何标签信息（旧版本镜像），需要重建以添加标签
+    if [[ -z "$image_slurm" && -z "$image_munge" && -z "$image_saltstack" ]]; then
+        # 检查是否是非常旧的镜像（没有 build.* 标签）
+        local has_any_label=$(docker image inspect "$apphub_image" --format '{{range $k, $v := .Config.Labels}}{{if hasPrefix $k "build."}}1{{end}}{{end}}' 2>/dev/null || echo "")
+        if [[ -z "$has_any_label" ]]; then
+            # 旧镜像没有标签，但不强制重建（用户可以用 --force）
+            # 返回 NO_CHANGE 以保持稳定性
+            echo "NO_CHANGE"
+            return 0
+        fi
+    fi
+    
+    # 如果有任何重建原因，返回它们
+    if [[ ${#reasons[@]} -gt 0 ]]; then
+        echo "${reasons[*]}"
+        return 0
+    fi
+    
+    # 没有实质性变化
+    echo "NO_CHANGE"
+    return 0
+}
+
 # Calculate combined hash for a service (source code + config + Dockerfile)
 calculate_service_hash() {
     local service="$1"
@@ -795,9 +1544,19 @@ calculate_service_hash() {
         hash_data+="$(calculate_hash "$dockerfile_tpl")\n"
     fi
     
-    # 2. Source code directory hash
+    # 2. Source code directory hash (with special handling for apphub)
     if [[ -d "$service_path" ]]; then
-        hash_data+="$(calculate_hash "$service_path")\n"
+        if [[ "$service" == "apphub" ]]; then
+            # AppHub 特殊处理：只关注关键文件变化，忽略无关紧要的变化
+            # 这是因为 AppHub 作为包分发中心，只有以下情况需要重建：
+            # - 新增组件/包
+            # - SLURM/SaltStack 版本变化
+            # - 核心 Dockerfile 构建逻辑变化（已在上面处理）
+            # - tarball 文件变化
+            hash_data+="$(calculate_apphub_critical_hash "$service_path")\n"
+        else
+            hash_data+="$(calculate_hash "$service_path")\n"
+        fi
     fi
     
     # 3. Configuration file hashes (service-specific)
@@ -881,6 +1640,99 @@ need_rebuild() {
     
     # Compare hashes
     if [[ "$current_hash" != "$image_hash" ]]; then
+        echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
+        return 0
+    fi
+    
+    # No need to rebuild
+    echo "NO_CHANGE"
+    return 1
+}
+
+# Check if service needs to be rebuilt for a specific platform
+# This is used by build_component_for_platform to check platform-specific images
+# Returns: FORCE_REBUILD, SKIP_CACHE_CHECK, IMAGE_NOT_EXIST, NO_HASH_LABEL, HASH_CHANGED, NO_CHANGE
+need_rebuild_for_platform() {
+    local service="$1"
+    local platform="$2"
+    local tag="${3:-${IMAGE_TAG:-latest}}"
+    
+    # Normalize platform and get arch name
+    if [[ "$platform" != *"/"* ]]; then
+        platform="linux/$platform"
+    fi
+    local arch_name="${platform##*/}"
+    
+    # Always use architecture-suffixed tag for multi-platform builds
+    # This matches the image naming convention in build_component_for_platform()
+    # Examples: ai-infra-apphub:v0.3.8-arm64, ai-infra-apphub:v0.3.8-amd64
+    local arch_suffix="-${arch_name}"
+    local image="ai-infra-${service}:${tag}${arch_suffix}"
+    local legacy_image="ai-infra-${service}:${tag}"  # Without arch suffix (legacy format)
+    
+    # Force rebuild mode
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        echo "FORCE_REBUILD"
+        return 0
+    fi
+    
+    # Skip cache check mode
+    if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
+        echo "SKIP_CACHE_CHECK"
+        return 0
+    fi
+    
+    # Check if it's a dependency service (external image)
+    local dep_conf="$SRC_DIR/$service/dependency.conf"
+    if [[ -f "$dep_conf" ]]; then
+        # For dependencies, just check if local image exists (with or without arch suffix)
+        if docker image inspect "$image" >/dev/null 2>&1 || docker image inspect "$legacy_image" >/dev/null 2>&1; then
+            echo "NO_CHANGE"
+            return 1
+        else
+            echo "IMAGE_NOT_EXIST"
+            return 0
+        fi
+    fi
+    
+    # Image doesn't exist - check both with and without arch suffix
+    local actual_image=""
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        actual_image="$image"
+    elif docker image inspect "$legacy_image" >/dev/null 2>&1; then
+        actual_image="$legacy_image"
+    else
+        echo "IMAGE_NOT_EXIST"
+        return 0
+    fi
+    
+    # Calculate current file hash
+    local current_hash=$(calculate_service_hash "$service")
+    
+    # Get hash stored in image label
+    local image_hash=$(docker image inspect "$actual_image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
+    
+    # No hash label in image, need to rebuild
+    if [[ -z "$image_hash" ]]; then
+        echo "NO_HASH_LABEL"
+        return 0
+    fi
+    
+    # Compare hashes
+    if [[ "$current_hash" != "$image_hash" ]]; then
+        # AppHub 特殊处理：进行更细粒度的变化检测
+        # 由于 AppHub 构建耗时长，只有在真正需要时才重建
+        if [[ "$service" == "apphub" ]]; then
+            local rebuild_reason=$(check_apphub_rebuild_necessity)
+            if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+                # 哈希变化但没有实质性变化（可能是哈希算法更新），跳过重建
+                echo "NO_CHANGE"
+                return 1
+            else
+                echo "REBUILD_NEEDED|${rebuild_reason}"
+                return 0
+            fi
+        fi
         echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
         return 0
     fi
@@ -974,22 +1826,40 @@ show_cache_status() {
     
     local all_services=("${DEPENDENCY_SERVICES[@]}" "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
     
-    printf "%-25s %-15s %-50s\n" "SERVICE" "STATUS" "REASON"
-    printf "%-25s %-15s %-50s\n" "-------" "------" "------"
+    # Determine platforms to check (from BUILD_PLATFORMS or detect native)
+    local platforms_to_check=()
+    if [[ -n "${BUILD_PLATFORMS:-}" ]]; then
+        IFS=',' read -ra platforms_to_check <<< "$BUILD_PLATFORMS"
+    else
+        local native_platform=$(_detect_docker_platform 2>/dev/null || echo "linux/arm64")
+        local native_arch="${native_platform##*/}"
+        platforms_to_check=("$native_arch")
+    fi
+    
+    printf "%-25s %-10s %-15s %-40s\n" "SERVICE" "ARCH" "STATUS" "REASON"
+    printf "%-25s %-10s %-15s %-40s\n" "-------" "----" "------" "------"
     
     for service in "${all_services[@]}"; do
-        local result=$(need_rebuild "$service" "$tag")
-        local status
-        
-        if [[ "$result" == "NO_CHANGE" ]]; then
-            status="${GREEN}✓ CACHED${NC}"
-            skip_build=$((skip_build + 1))
-        else
-            status="${YELLOW}○ REBUILD${NC}"
-            need_build=$((need_build + 1))
-        fi
-        
-        printf "%-25s %-15b %-50s\n" "$service" "$status" "$result"
+        for arch in "${platforms_to_check[@]}"; do
+            # Normalize architecture name
+            case "$arch" in
+                amd64|x86_64) arch="amd64" ;;
+                arm64|aarch64) arch="arm64" ;;
+            esac
+            
+            local result=$(need_rebuild_for_platform "$service" "$arch" "$tag")
+            local status
+            
+            if [[ "$result" == "NO_CHANGE" ]]; then
+                status="${GREEN}✓ CACHED${NC}"
+                skip_build=$((skip_build + 1))
+            else
+                status="${YELLOW}○ REBUILD${NC}"
+                need_build=$((need_build + 1))
+            fi
+            
+            printf "%-25s %-10s %-15b %-40s\n" "$service" "$arch" "$status" "$result"
+        done
     done
     
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1084,6 +1954,20 @@ generate_production_env() {
         log_warn "⚠️  Please manually set EXTERNAL_HOST in $env_file if needed"
     else
         log_info "✅ Detected external IP: $detected_external_host"
+    fi
+    
+    # Detect public domain (for iframe embedding and browser redirects)
+    log_info "Detecting public domain..."
+    local detected_public_host=$(detect_public_domain)
+    if [[ -n "$detected_public_host" ]]; then
+        log_info "✅ Detected public domain: $detected_public_host"
+    else
+        # 如果 EXTERNAL_HOST 是私有 IP，提示设置 PUBLIC_HOST
+        if is_private_ip "$detected_external_host"; then
+            log_warn "⚠️  EXTERNAL_HOST is a private IP ($detected_external_host)"
+            log_warn "⚠️  For public cloud, set PUBLIC_HOST to your domain or public IP"
+            log_info "💡 Example: PUBLIC_HOST=ai-infra-matrix.top"
+        fi
     fi
     
     # Check if target file exists
@@ -1196,11 +2080,13 @@ generate_production_env() {
         -v test_ssh="$test_ssh_password" \
         -v test_root="$test_root_password" \
         -v ext_host="$detected_external_host" \
+        -v pub_host="$detected_public_host" \
         '
         /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
         /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=80"; next }
         /^HTTPS_PORT=/ { print "HTTPS_PORT=443"; next }
         /^EXTERNAL_SCHEME=/ { print "EXTERNAL_SCHEME=https"; next }
+        /^PUBLIC_HOST=/ { if (pub_host != "") print "PUBLIC_HOST=" pub_host; else print; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
@@ -1301,6 +2187,16 @@ generate_production_env() {
     echo "    EXTERNAL_PORT=80      (HTTP redirect port)"
     echo "    HTTPS_PORT=443        (HTTPS main service port)"
     echo "    EXTERNAL_SCHEME=https"
+    if [[ -n "$detected_public_host" ]]; then
+        echo "    PUBLIC_HOST=$detected_public_host  (for iframe embedding & browser redirects)"
+    else
+        if is_private_ip "$detected_external_host"; then
+            log_warn ""
+            log_warn "⚠️  PUBLIC_HOST not set (EXTERNAL_HOST is private IP)"
+            log_warn "⚠️  For public cloud environments, set PUBLIC_HOST in .env:"
+            log_warn "    PUBLIC_HOST=your-domain.com"
+        fi
+    fi
     log_info ""
     log_info "📋 Port Mapping (for Cloudflare Full mode):"
     echo "    外部 80  → 容器 80  (HTTP → HTTPS 重定向)"
@@ -1492,7 +2388,7 @@ COMMON_IMAGES=(
     "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-3.80}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
-    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.1}}"
+    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.3}}"
 )
 
 # Initialize SAFELINE_IMAGES array for SafeLine WAF
@@ -2168,12 +3064,335 @@ clean_ssl_certificates() {
     log_info "✅ SSL certificates cleaned"
 }
 
+# 导入用户自定义 SSL 证书
+# Usage: ./build.sh ssl-import <cert_path> [--key=key_path] [--ca=ca_path] [--chain=chain_path] [--force]
+# Examples:
+#   ./build.sh ssl-import /path/to/certs/                    # 自动检测目录下的证书文件
+#   ./build.sh ssl-import /path/to/server.crt --key=/path/to/server.key
+#   ./build.sh ssl-import /path/to/fullchain.pem --key=/path/to/privkey.pem
+import_custom_ssl_certificates() {
+    local cert_path="${1:-}"
+    local key_path=""
+    local ca_path=""
+    local chain_path=""
+    local force="false"
+    
+    # 解析参数
+    shift 1 2>/dev/null || true
+    for arg in "$@"; do
+        case "$arg" in
+            --key=*) key_path="${arg#--key=}" ;;
+            --ca=*) ca_path="${arg#--ca=}" ;;
+            --chain=*) chain_path="${arg#--chain=}" ;;
+            --force) force="true" ;;
+        esac
+    done
+    
+    # 检查证书路径是否提供
+    if [[ -z "$cert_path" ]]; then
+        log_error "请提供证书路径"
+        log_info ""
+        log_info "用法: ./build.sh ssl-import <证书路径或目录> [选项]"
+        log_info ""
+        log_info "选项:"
+        log_info "  --key=<path>    私钥文件路径 (如果未在目录中自动检测到)"
+        log_info "  --ca=<path>     CA 证书文件路径 (可选)"
+        log_info "  --chain=<path>  证书链文件路径 (可选)"
+        log_info "  --force         覆盖现有证书"
+        log_info ""
+        log_info "示例:"
+        log_info "  # 从目录导入 (自动检测 .crt/.key/.pem 文件)"
+        log_info "  ./build.sh ssl-import /path/to/certs/"
+        log_info ""
+        log_info "  # 指定证书和私钥文件"
+        log_info "  ./build.sh ssl-import /path/to/server.crt --key=/path/to/server.key"
+        log_info ""
+        log_info "  # Let's Encrypt 证书 (fullchain + privkey)"
+        log_info "  ./build.sh ssl-import /etc/letsencrypt/live/domain.com/fullchain.pem \\"
+        log_info "      --key=/etc/letsencrypt/live/domain.com/privkey.pem"
+        log_info ""
+        log_info "支持的证书格式:"
+        log_info "  - PEM 格式 (.pem, .crt, .cer)"
+        log_info "  - 私钥 (.key, .pem)"
+        log_info "  - 证书链 (.chain.crt, fullchain.pem)"
+        return 1
+    fi
+    
+    # 检查路径是否存在
+    if [[ ! -e "$cert_path" ]]; then
+        log_error "路径不存在: $cert_path"
+        return 1
+    fi
+    
+    log_info "🔐 导入用户自定义 SSL 证书..."
+    log_info "   源路径: $cert_path"
+    
+    # 如果是目录，自动检测证书文件
+    if [[ -d "$cert_path" ]]; then
+        log_info "   检测到目录，自动搜索证书文件..."
+        
+        local detected_cert=""
+        local detected_key=""
+        local detected_ca=""
+        local detected_chain=""
+        
+        # 检测证书文件 (优先级: fullchain.pem > server.crt > *.crt)
+        for pattern in "fullchain.pem" "server.crt" "certificate.crt" "cert.crt" "*.crt" "*.pem"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_cert" ]]; then
+                # 验证是否为证书文件 (包含 BEGIN CERTIFICATE)
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_cert="$found"
+                    log_info "   检测到证书: $found"
+                fi
+            fi
+        done
+        
+        # 检测私钥文件 (优先级: privkey.pem > server.key > *.key)
+        for pattern in "privkey.pem" "server.key" "private.key" "key.pem" "*.key"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_key" ]]; then
+                # 验证是否为私钥文件 (包含 BEGIN.*PRIVATE KEY)
+                if grep -qE "BEGIN.*PRIVATE KEY" "$found" 2>/dev/null; then
+                    detected_key="$found"
+                    log_info "   检测到私钥: $found"
+                fi
+            fi
+        done
+        
+        # 检测 CA 证书
+        for pattern in "ca.crt" "ca.pem" "ca-bundle.crt" "root.crt"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_ca" ]]; then
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_ca="$found"
+                    log_info "   检测到 CA 证书: $found"
+                fi
+            fi
+        done
+        
+        # 检测证书链
+        for pattern in "chain.pem" "*.chain.crt" "intermediate.crt"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_chain" ]]; then
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_chain="$found"
+                    log_info "   检测到证书链: $found"
+                fi
+            fi
+        done
+        
+        # 使用检测到的文件
+        cert_path="${detected_cert:-}"
+        [[ -z "$key_path" ]] && key_path="${detected_key:-}"
+        [[ -z "$ca_path" ]] && ca_path="${detected_ca:-}"
+        [[ -z "$chain_path" ]] && chain_path="${detected_chain:-}"
+    fi
+    
+    # 验证证书文件
+    if [[ -z "$cert_path" ]] || [[ ! -f "$cert_path" ]]; then
+        log_error "未找到有效的证书文件"
+        return 1
+    fi
+    
+    # 验证私钥文件
+    if [[ -z "$key_path" ]] || [[ ! -f "$key_path" ]]; then
+        log_error "未找到有效的私钥文件"
+        log_info "请使用 --key=<path> 指定私钥文件路径"
+        return 1
+    fi
+    
+    # 验证证书格式
+    if ! openssl x509 -in "$cert_path" -noout 2>/dev/null; then
+        log_error "无效的证书文件格式: $cert_path"
+        return 1
+    fi
+    
+    # 验证私钥格式
+    if ! openssl rsa -in "$key_path" -check -noout 2>/dev/null && \
+       ! openssl ec -in "$key_path" -check -noout 2>/dev/null; then
+        log_error "无效的私钥文件格式: $key_path"
+        return 1
+    fi
+    
+    # 验证证书和私钥是否匹配
+    local cert_modulus=$(openssl x509 -in "$cert_path" -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+    local key_modulus=$(openssl rsa -in "$key_path" -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+    
+    # 如果 RSA 验证失败，尝试 EC 密钥
+    if [[ -z "$key_modulus" ]] || [[ "$key_modulus" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
+        cert_modulus=$(openssl x509 -in "$cert_path" -noout -pubkey 2>/dev/null | md5sum | awk '{print $1}')
+        key_modulus=$(openssl ec -in "$key_path" -pubout 2>/dev/null | md5sum | awk '{print $1}')
+    fi
+    
+    if [[ "$cert_modulus" != "$key_modulus" ]]; then
+        log_error "证书和私钥不匹配!"
+        log_error "  证书: $cert_path"
+        log_error "  私钥: $key_path"
+        return 1
+    fi
+    
+    log_info "✓ 证书和私钥验证通过"
+    
+    # 获取证书信息
+    local cert_cn=$(openssl x509 -in "$cert_path" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')
+    local cert_expire=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | cut -d= -f2)
+    local cert_san=$(openssl x509 -in "$cert_path" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+|IP Address:[^,]+' | sed 's/DNS://g; s/IP Address://g' | tr '\n' ', ' | sed 's/,$//')
+    
+    log_info "   证书主体 (CN): $cert_cn"
+    [[ -n "$cert_san" ]] && log_info "   备用名称 (SAN): $cert_san"
+    log_info "   过期时间: $cert_expire"
+    
+    # 检查现有证书
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        log_warn "SSL 证书已存在于 $SSL_OUTPUT_DIR"
+        log_info "使用 --force 参数覆盖现有证书"
+        return 0
+    fi
+    
+    # 创建输出目录
+    mkdir -p "$SSL_OUTPUT_DIR"
+    mkdir -p "$SSL_OUTPUT_DIR/ca"
+    
+    # 安全文件名
+    local safe_name=$(echo "${cert_cn:-custom}" | sed 's/\*/_wildcard_/g; s/[^a-zA-Z0-9._-]/_/g')
+    
+    # 获取源文件和目标文件的绝对路径，用于比较
+    local abs_cert_path=$(cd "$(dirname "$cert_path")" && pwd)/$(basename "$cert_path")
+    local abs_key_path=$(cd "$(dirname "$key_path")" && pwd)/$(basename "$key_path")
+    local abs_output_dir=$(cd "$SSL_OUTPUT_DIR" && pwd)
+    
+    # 复制证书文件
+    log_step "复制证书文件到 nginx SSL 目录..."
+    
+    local target_cert="$SSL_OUTPUT_DIR/$safe_name.crt"
+    local target_key="$SSL_OUTPUT_DIR/$safe_name.key"
+    
+    # 检查源和目标是否相同，避免 "identical" 错误
+    if [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.crt" ]]; then
+        cp "$cert_path" "$target_cert"
+        log_info "   复制证书: $target_cert"
+    else
+        log_info "   证书已在目标位置: $target_cert"
+    fi
+    
+    if [[ "$abs_key_path" != "$abs_output_dir/$safe_name.key" ]]; then
+        cp "$key_path" "$target_key"
+        log_info "   复制私钥: $target_key"
+    else
+        log_info "   私钥已在目标位置: $target_key"
+    fi
+    chmod 600 "$target_key"
+    
+    # 复制 CA 证书 (如果提供)
+    if [[ -n "$ca_path" ]] && [[ -f "$ca_path" ]]; then
+        local abs_ca_path=$(cd "$(dirname "$ca_path")" && pwd)/$(basename "$ca_path")
+        if [[ "$abs_ca_path" != "$abs_output_dir/ca/ca.crt" ]]; then
+            cp "$ca_path" "$SSL_OUTPUT_DIR/ca/ca.crt"
+            log_info "   复制 CA 证书: $SSL_OUTPUT_DIR/ca/ca.crt"
+        else
+            log_info "   CA 证书已在目标位置: $SSL_OUTPUT_DIR/ca/ca.crt"
+        fi
+    fi
+    
+    # 复制或生成证书链
+    if [[ -n "$chain_path" ]] && [[ -f "$chain_path" ]]; then
+        local abs_chain_path=$(cd "$(dirname "$chain_path")" && pwd)/$(basename "$chain_path")
+        if [[ "$abs_chain_path" != "$abs_output_dir/$safe_name.chain.crt" ]]; then
+            cp "$chain_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+            log_info "   复制证书链: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        else
+            log_info "   证书链已在目标位置: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        fi
+    else
+        # 尝试从证书文件中提取证书链 (fullchain.pem 包含多个证书)
+        local cert_count=$(grep -c "BEGIN CERTIFICATE" "$cert_path" 2>/dev/null || echo "1")
+        if [[ "$cert_count" -gt 1 ]]; then
+            log_info "   检测到证书链 ($cert_count 个证书)，保留完整链"
+            [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.chain.crt" ]] && cp "$cert_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        elif [[ -n "$ca_path" ]] && [[ -f "$ca_path" ]]; then
+            cat "$cert_path" "$ca_path" > "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+            log_info "   生成证书链: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        else
+            [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.chain.crt" ]] && cp "$cert_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        fi
+    fi
+    
+    # 创建通用符号链接
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt"
+    [[ -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] && cp "$SSL_OUTPUT_DIR/ca/ca.crt" "$SSL_OUTPUT_DIR/ca.crt"
+    
+    log_info "   创建符号链接: server.crt -> $safe_name.crt"
+    log_info "   创建符号链接: server.key -> $safe_name.key"
+    
+    # 更新 .env 配置
+    log_step "更新 .env 配置..."
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ 用户自定义 SSL 证书导入成功!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info ""
+    log_info "📁 证书文件位置 (将打包到 nginx 镜像):"
+    log_info "   服务器证书: $SSL_OUTPUT_DIR/server.crt"
+    log_info "   服务器私钥: $SSL_OUTPUT_DIR/server.key"
+    [[ -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] && log_info "   CA 证书:     $SSL_OUTPUT_DIR/ca/ca.crt"
+    log_info ""
+    log_info "📋 下一步:"
+    log_info "   1. 重新构建 nginx:  ./build.sh nginx"
+    log_info "   2. 重启服务:        docker compose restart nginx"
+    log_info ""
+    log_info "💡 验证证书:"
+    log_info "   ./build.sh ssl-info"
+    
+    return 0
+}
+
 detect_compose_command() {
     if command -v docker-compose >/dev/null 2>&1; then
         echo "docker-compose"
     elif docker compose version >/dev/null 2>&1; then
         echo "docker compose"
     else
+        return 1
+    fi
+}
+
+# Check if SLURM deb packages are available in AppHub for specific architecture
+# Args: $1 - target architecture (amd64, arm64), defaults to current arch
+# Returns 0 if available, 1 if not
+check_apphub_slurm_available() {
+    local target_arch="${1:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    # Normalize architecture name
+    case "$target_arch" in
+        x86_64|x64) target_arch="amd64" ;;
+        aarch64) target_arch="arm64" ;;
+    esac
+    
+    # Check if Packages file exists
+    local packages_content
+    packages_content=$(curl -sf --connect-timeout 2 --max-time 10 "${apphub_url}/pkgs/slurm-deb/Packages" 2>/dev/null)
+    if [[ -z "$packages_content" ]]; then
+        log_debug "SLURM Packages file not found in AppHub"
+        return 1
+    fi
+    
+    # Check if packages for target architecture exist
+    # Look for "Architecture: <target_arch>" in the Packages file
+    if echo "$packages_content" | grep -q "^Architecture: ${target_arch}$"; then
+        log_debug "Found SLURM packages for $target_arch in AppHub"
+        return 0
+    else
+        log_debug "No SLURM packages for $target_arch in AppHub (found: $(echo "$packages_content" | grep "^Architecture:" | sort -u | tr '\n' ' '))"
         return 1
     fi
 }
@@ -2199,10 +3418,23 @@ wait_for_apphub_ready() {
             continue
         fi
         
-        # Check if packages are accessible
-        if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
-            log_info "✅ AppHub is ready!"
-            return 0
+        # Check health endpoint (primary check)
+        if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/health" >/dev/null 2>&1; then
+            # Health check passed, verify nginx is serving content
+            if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/" >/dev/null 2>&1; then
+                log_info "✅ AppHub is ready!"
+                # Show available SLURM package architectures
+                local packages_content
+                packages_content=$(curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" 2>/dev/null || true)
+                if [[ -n "$packages_content" ]]; then
+                    local available_archs
+                    available_archs=$(echo "$packages_content" | grep "^Architecture:" | awk '{print $2}' | sort -u | tr '\n' ' ')
+                    log_info "📦 SLURM packages available for: ${available_archs:-none}"
+                else
+                    log_warn "⚠️  Note: SLURM deb packages not available (may have been skipped during build)"
+                fi
+                return 0
+            fi
         fi
         
         log_warn "[${elapsed}s] AppHub not ready yet..."
@@ -2759,6 +3991,171 @@ list_download_components() {
     echo ""
 }
 
+# ==============================================================================
+# Go Dependencies Update Functions - Go 依赖更新功能
+# ==============================================================================
+
+update_go_dependencies() {
+    local projects=("backend" "nightingale")
+    local update_all=true
+    local project_to_update=""
+    local update_mode="--patch"
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                echo "Usage: $0 update-go-deps [project] [options]"
+                echo ""
+                echo "Projects:"
+                echo "  backend          Update backend Go dependencies"
+                echo "  nightingale      Update Nightingale Go dependencies"
+                echo "  all              Update all projects (default)"
+                echo ""
+                echo "Options:"
+                echo "  -h, --help       Show this help message"
+                echo "  --patch          Only update patch versions (default)"
+                echo "  --minor          Update minor and patch versions"
+                echo "  --tidy           Only run go mod tidy (no upgrades)"
+                echo ""
+                echo "Examples:"
+                echo "  $0 update-go-deps              # Update all projects (patch only)"
+                echo "  $0 update-go-deps backend      # Update backend only"
+                echo "  $0 update-go-deps --tidy       # Only tidy all projects"
+                return 0
+                ;;
+            --patch|--minor|--tidy)
+                update_mode="$1"
+                shift
+                ;;
+            backend|nightingale|all)
+                project_to_update="$1"
+                update_all=false
+                shift
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    export GOPROXY="https://goproxy.cn,https://goproxy.io,direct"
+    
+    local success=0
+    local failed=0
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          Go Dependencies Update Tool                           ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "GOPROXY: $GOPROXY"
+    log_info "Update Mode: $update_mode"
+    echo ""
+    
+    # Determine which projects to update
+    if [[ "$update_all" == true ]] || [[ "$project_to_update" == "all" ]]; then
+        # Update all projects
+        for project in "${projects[@]}"; do
+            _update_go_project "$project" "$update_mode" || failed=$((failed + 1))
+            success=$((success + 1))
+        done
+    else
+        # Update specific project
+        if [[ " ${projects[*]} " =~ " ${project_to_update} " ]]; then
+            _update_go_project "$project_to_update" "$update_mode" || failed=$((failed + 1))
+            success=$((success + 1))
+        else
+            log_error "Unknown project: $project_to_update"
+            log_info "Valid projects: ${projects[*]}"
+            return 1
+        fi
+    fi
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                   Update Complete                              ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Processed: $success project(s)"
+    [[ $failed -gt 0 ]] && log_error "Failed: $failed project(s)" || log_info "All projects updated successfully ✓"
+    echo ""
+    
+    return $([[ $failed -eq 0 ]] && echo 0 || echo 1)
+}
+
+_update_go_project() {
+    local project="$1"
+    local update_mode="$2"
+    local project_path=""
+    
+    case "$project" in
+        backend)
+            project_path="$SCRIPT_DIR/src/backend"
+            ;;
+        nightingale)
+            project_path="$SCRIPT_DIR/third_party/nightingale"
+            ;;
+        *)
+            log_error "Unknown project: $project"
+            return 1
+            ;;
+    esac
+    
+    if [[ ! -f "$project_path/go.mod" ]]; then
+        log_error "go.mod not found: $project_path/go.mod"
+        return 1
+    fi
+    
+    log_step "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_step "Updating: $project"
+    log_step "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    cd "$project_path" || return 1
+    
+    # Step 1: go mod tidy
+    log_info "[1/3] Running go mod tidy..."
+    if ! timeout 120 go mod tidy 2>&1 | head -20; then
+        log_error "Failed to run go mod tidy"
+        cd "$SCRIPT_DIR"
+        return 1
+    fi
+    
+    # Step 2: go mod verify
+    log_info "[2/3] Verifying go.mod..."
+    if ! go mod verify 2>&1 | head -10; then
+        log_error "go mod verify failed"
+        cd "$SCRIPT_DIR"
+        return 1
+    fi
+    
+    # Step 3: Update dependencies (based on mode)
+    case "$update_mode" in
+        --tidy)
+            log_info "[3/3] Skipping dependency updates (--tidy mode)"
+            ;;
+        --patch)
+            log_info "[3/3] Updating patch versions (go get -u=patch)..."
+            if ! timeout 300 go get -u=patch ./... 2>&1 | head -30; then
+                log_warn "Some patch updates may have failed, but continuing..."
+            fi
+            ;;
+        --minor)
+            log_info "[3/3] Updating minor and patch versions (go get -u)..."
+            if ! timeout 300 go get -u ./... 2>&1 | head -30; then
+                log_warn "Some updates may have failed, but continuing..."
+            fi
+            ;;
+    esac
+    
+    log_info "✓ $project updated successfully"
+    echo ""
+    
+    cd "$SCRIPT_DIR" || return 1
+    return 0
+}
+
 # Get all component names from components.json
 get_all_download_components() {
     if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
@@ -2871,9 +4268,9 @@ download_third_party() {
     
     for component in "${components_to_download[@]}"; do
         if download_third_party_component "$component"; then
-            ((success++))
+            success=$((success + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
     
@@ -2951,7 +4348,7 @@ TEMPLATE_VARIABLES=(
     "NODE_ALPINE_IMAGE"           # Full node alpine image name (e.g., node:22-alpine)
     "NODE_BOOKWORM_IMAGE"         # Full node bookworm image name (e.g., node:22-bookworm)
     "JUPYTER_BASE_IMAGE"          # Full jupyter base image name (e.g., jupyter/base-notebook:latest)
-    "GITEA_IMAGE"                 # Full gitea image name (e.g., gitea/gitea:1.25.1)
+    "GITEA_IMAGE"                 # Full gitea image name (e.g., gitea/gitea:1.25.3)
     
     # ===========================================
     # Component/Application versions (Build-time)
@@ -2962,7 +4359,7 @@ TEMPLATE_VARIABLES=(
     "CATEGRAF_VERSION"    # Categraf version (e.g., 0.4.6)
     "NODE_EXPORTER_VERSION" # Node Exporter version (e.g., v1.8.2)
     "SINGULARITY_VERSION" # Singularity version
-    "GITEA_VERSION"       # Gitea version (e.g., 1.25.1)
+    "GITEA_VERSION"       # Gitea version (e.g., 1.25.3)
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
     "PIP_VERSION"         # pip version (e.g., 24.2)
     "N9E_FE_VERSION"      # Nightingale frontend version (e.g., v7.7.2, empty for auto-detect)
@@ -2994,6 +4391,8 @@ TEMPLATE_VARIABLES=(
     "JUPYTERHUB_PORT"     # JupyterHub service port (default: 8000)
     "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
     "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
+    "KAFKA_UI_HOST"       # Kafka UI service host (default: kafka-ui)
+    "KAFKA_UI_PORT"       # Kafka UI service port (default: 8080)
     "EXTERNAL_PORT"       # Main Nginx port (default: 8080)
     "HTTPS_PORT"          # HTTPS port (default: 8443)
     "EXTERNAL_HOST"       # External host for CSP headers
@@ -3022,6 +4421,31 @@ TEMPLATE_VARIABLES=(
     "GRAFANA_VERSION"     # Grafana version (e.g., latest)
     "ALERTMANAGER_VERSION" # AlertManager version (e.g., latest)
     "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
+    
+    # ===========================================
+    # Keycloak SSO configuration (Runtime)
+    # Used for Keycloak IAM service
+    # ===========================================
+    "KEYCLOAK_VERSION"    # Keycloak version (e.g., 26.0)
+    "KEYCLOAK_HOST"       # Keycloak service host (default: keycloak)
+    "KEYCLOAK_PORT"       # Keycloak internal port (default: 8080)
+    "KEYCLOAK_HTTP_PORT"  # Keycloak HTTP port (e.g., 8180)
+    "KEYCLOAK_HTTPS_PORT" # Keycloak HTTPS port (e.g., 8543)
+    "KEYCLOAK_ADMIN"      # Keycloak admin username
+    "KEYCLOAK_ADMIN_PASSWORD" # Keycloak admin password
+    "KEYCLOAK_DB_NAME"    # Keycloak database name
+    "KEYCLOAK_DB_USER"    # Keycloak database user
+    "KEYCLOAK_DB_PASSWORD" # Keycloak database password
+    
+    # ===========================================
+    # ArgoCD GitOps configuration (Runtime)
+    # Used for ArgoCD deployment service
+    # ===========================================
+    "ARGOCD_VERSION"      # ArgoCD version (e.g., v2.13.3)
+    "ARGOCD_HOST"         # ArgoCD service host (default: argocd-server)
+    "ARGOCD_PORT"         # ArgoCD internal port (default: 8080)
+    "ARGOCD_HTTP_PORT"    # ArgoCD HTTP port (e.g., 8280)
+    "ARGOCD_ADMIN_PASSWORD" # ArgoCD admin password
     
     # ===========================================
     # Gitea SSO configuration (Runtime)
@@ -3702,7 +5126,7 @@ docker_with_retry() {
     # 对于 pull 操作，检查镜像是否已存在且架构匹配
     if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
         if docker image inspect "$image" >/dev/null 2>&1; then
-            # 检查已存在镜像的架构是否与主机匹配
+            # 检查已存在镜像的架构是否与目标平台匹配
             local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
             local expected_arch=""
             case "$DOCKER_HOST_PLATFORM" in
@@ -3710,13 +5134,25 @@ docker_with_retry() {
                 linux/arm64) expected_arch="arm64" ;;
                 linux/arm/v7) expected_arch="arm" ;;
             esac
-            if [[ -n "$expected_arch" ]] && [[ "$existing_arch" != "$expected_arch" ]]; then
-                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
-                log_info "  🗑 Removing wrong-arch image before re-pulling..."
-                docker rmi "$image" >/dev/null 2>&1 || true
-                # 继续执行 pull 操作
+            
+            # 如果指定了目标架构，且已有镜像架构不匹配或为空，需要重新拉取
+            if [[ -n "$expected_arch" ]]; then
+                if [[ -z "$existing_arch" ]] || [[ "$existing_arch" != "$expected_arch" ]]; then
+                    if [[ -z "$existing_arch" ]]; then
+                        log_warn "  ⚠ Image exists but arch unknown, re-pulling for: $expected_arch"
+                    else
+                        log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
+                    fi
+                    log_info "  🗑 Removing wrong-arch image before re-pulling..."
+                    docker rmi "$image" >/dev/null 2>&1 || true
+                    # 继续执行 pull 操作
+                else
+                    log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                    return 0
+                fi
             else
-                log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                # 未指定目标架构，镜像存在就跳过
+                log_info "  ✓ Image exists: $image (arch: ${existing_arch:-unknown})"
                 return 0
             fi
         fi
@@ -3916,6 +5352,7 @@ pull_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local platforms="${4:-}"  # Optional: amd64,arm64 or empty for unified tag
     
     discover_services
     
@@ -3926,6 +5363,34 @@ pull_all_services() {
     # 使用通用函数验证 registry 路径
     if ! validate_registry_path "$registry" "$tag"; then
         return 1
+    fi
+    
+    # Parse platforms parameter (--platform=amd64,arm64 -> amd64,arm64)
+    local platforms_value=""
+    if [[ -n "$platforms" ]]; then
+        if [[ "$platforms" == --platform=* ]]; then
+            platforms_value="${platforms#--platform=}"
+        else
+            platforms_value="$platforms"
+        fi
+    fi
+    
+    # Normalize and parse platforms into array
+    local -a PLATFORM_ARRAY=()
+    if [[ -n "$platforms_value" ]]; then
+        IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms_value"
+        # Normalize platform names
+        for i in "${!PLATFORM_ARRAY[@]}"; do
+            local p="${PLATFORM_ARRAY[$i]}"
+            case "$p" in
+                linux/amd64|amd64|x86_64) PLATFORM_ARRAY[$i]="amd64" ;;
+                linux/arm64|arm64|aarch64) PLATFORM_ARRAY[$i]="arm64" ;;
+                *)
+                    log_warn "Unknown platform: $p, skipping..."
+                    unset 'PLATFORM_ARRAY[$i]'
+                    ;;
+            esac
+        done
     fi
     
     if [[ -z "$registry" ]]; then
@@ -3946,14 +5411,9 @@ pull_all_services() {
             total_count=$((total_count + 1))
             log_info "[$total_count/${#COMMON_IMAGES[@]}] $image"
             
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+            # 不再单独检查镜像是否存在，因为可能存在架构不匹配的情况
             if pull_image_with_retry "$image" "$max_retries"; then
-                log_info "  ✓ Pulled"
                 success_count=$((success_count + 1))
             else
                 log_warn "  ✗ Failed"
@@ -3971,14 +5431,8 @@ pull_all_services() {
             total_count=$((total_count + 1))
             log_info "[$safeline_count/${#SAFELINE_IMAGES[@]}] $image"
             
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
             if pull_image_with_retry "$image" "$max_retries"; then
-                log_info "  ✓ Pulled"
                 success_count=$((success_count + 1))
             else
                 log_warn "  ✗ Failed"
@@ -4006,131 +5460,193 @@ pull_all_services() {
         log_info "Registry: $registry"
         log_info "Tag: $tag"
         log_info "Max retries: $max_retries"
+        if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+            log_info "Platforms: ${PLATFORM_ARRAY[*]}"
+            log_info "Mode: Multi-architecture (方案一 - pull arch-specific tags)"
+        fi
         echo
         
-        # Phase 1: Pull common images from private registry
-        log_info "=== Phase 1: Common/third-party images ==="
-        for image in "${COMMON_IMAGES[@]}"; do
-            total_count=$((total_count + 1))
+        # If platforms specified, iterate through each platform for project services
+        if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+            # Multi-architecture pull mode
+            # Phase 1 and 2 (common/dependency) are skipped in multi-arch mode
+            # as they are architecture-agnostic and should be pulled without platform suffix
             
-            # Extract short name (e.g., confluentinc/cp-kafka:7.5.0 -> cp-kafka)
-            local image_name="${image%%:*}"
-            local image_tag="${image##*:}"
-            local short_name="${image_name##*/}"
-            local remote_image="${registry}/${short_name}:${image_tag}"
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                log_info "=========================================="
+                log_info "Pulling platform: $platform"
+                log_info "=========================================="
+                echo
+                
+                # Phase 3: Pull project services with architecture suffix
+                log_info "=== Project services (tag: ${tag}-${platform}) ==="
+                for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                    total_count=$((total_count + 1))
+                    local image_name="ai-infra-${service}:${tag}-${platform}"
+                    local remote_image="${registry}/ai-infra-${service}:${tag}-${platform}"
+                    
+                    log_info "[$total_count] $remote_image"
+                    
+                    if pull_image_with_retry "$remote_image" "$max_retries"; then
+                        if docker tag "$remote_image" "$image_name"; then
+                            log_info "  ✓ Tagged as $image_name"
+                            success_count=$((success_count + 1))
+                        else
+                            log_warn "  ⚠ Pulled but failed to tag"
+                            success_count=$((success_count + 1))
+                        fi
+                    else
+                        log_warn "  ✗ Failed"
+                        failed_services+=("${service}-${platform}")
+                    fi
+                done
+                echo
+                
+                # Phase 4: Pull special images with architecture suffix
+                log_info "=== Special images (tag: ${tag}-${platform}) ==="
+                local special_images=("backend-init")
+                for special in "${special_images[@]}"; do
+                    total_count=$((total_count + 1))
+                    local image_name="ai-infra-${special}:${tag}-${platform}"
+                    local remote_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                    
+                    log_info "[$total_count] $remote_image"
+                    
+                    if pull_image_with_retry "$remote_image" "$max_retries"; then
+                        if docker tag "$remote_image" "$image_name"; then
+                            log_info "  ✓ Tagged as $image_name"
+                            success_count=$((success_count + 1))
+                        else
+                            log_warn "  ⚠ Pulled but failed to tag"
+                            success_count=$((success_count + 1))
+                        fi
+                    else
+                        log_warn "  ✗ Failed"
+                        failed_services+=("special:${special}-${platform}")
+                    fi
+                done
+                echo
+            done
             
-            log_info "[$total_count] $remote_image"
+            log_info "Note: Common and dependency images should be pulled separately without"
+            log_info "      platform suffix using: ./build.sh pull-all $registry $tag"
+            echo
+        else
+            # Original unified tag mode (no platform specified)
             
-            # Check if original image already exists
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists locally"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
-            # Try to pull from private registry
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
-                if docker tag "$remote_image" "$image"; then
-                    log_info "  ✓ Pulled and tagged as $image"
-                    success_count=$((success_count + 1))
+            # Phase 1: Pull common images from private registry
+            log_info "=== Phase 1: Common/third-party images ==="
+            for image in "${COMMON_IMAGES[@]}"; do
+                total_count=$((total_count + 1))
+                
+                # Extract short name (e.g., confluentinc/cp-kafka:7.5.0 -> cp-kafka)
+                local image_name="${image%%:*}"
+                local image_tag="${image##*:}"
+                local short_name="${image_name##*/}"
+                local remote_image="${registry}/${short_name}:${image_tag}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                # 即使本地镜像存在，也需要检查架构是否匹配
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    # Tag as original image name for docker-compose compatibility
+                    if docker tag "$remote_image" "$image"; then
+                        log_info "  ✓ Tagged as $image"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed to pull from registry"
+                    failed_services+=("common:$short_name")
                 fi
-            else
-                log_warn "  ✗ Failed to pull from registry"
-                failed_services+=("common:$short_name")
-            fi
-        done
-        echo
-        
-        # Phase 2: Pull dependency images with project tag
-        log_info "=== Phase 2: Dependency images (tag: $tag) ==="
-        local dependencies=($(get_dependency_mappings))
-        for mapping in "${dependencies[@]}"; do
-            total_count=$((total_count + 1))
+            done
+            echo
             
-            local source_image="${mapping%%|*}"
-            local short_name="${mapping##*|}"
-            local remote_image="${registry}/${short_name}:${tag}"
-            
-            log_info "[$total_count] $remote_image -> $source_image"
-            
-            # Check if source image already exists
-            if docker image inspect "$source_image" &>/dev/null; then
-                log_info "  ✓ Already exists locally"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
-                if docker tag "$remote_image" "$source_image"; then
-                    log_info "  ✓ Pulled and tagged"
-                    success_count=$((success_count + 1))
+            # Phase 2: Pull dependency images with project tag
+            log_info "=== Phase 2: Dependency images (tag: $tag) ==="
+            local dependencies=($(get_dependency_mappings))
+            for mapping in "${dependencies[@]}"; do
+                total_count=$((total_count + 1))
+                
+                local source_image="${mapping%%|*}"
+                local short_name="${mapping##*|}"
+                local remote_image="${registry}/${short_name}:${tag}"
+                
+                log_info "[$total_count] $remote_image -> $source_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    # Tag as original image name for docker-compose compatibility
+                    if docker tag "$remote_image" "$source_image"; then
+                        log_info "  ✓ Tagged as $source_image"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("dep:$short_name")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("dep:$short_name")
-            fi
-        done
-        echo
-        
-        # Phase 3: Pull project services
-        log_info "=== Phase 3: Project services (tag: $tag) ==="
-        for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
-            total_count=$((total_count + 1))
-            local image_name="ai-infra-${service}:${tag}"
-            local remote_image="${registry}/${image_name}"
+            done
+            echo
             
-            log_info "[$total_count] $remote_image"
-            
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                if docker tag "$remote_image" "$image_name"; then
-                    log_info "  ✓ Pulled and tagged as $image_name"
-                    success_count=$((success_count + 1))
+            # Phase 3: Pull project services
+            log_info "=== Phase 3: Project services (tag: $tag) ==="
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${service}:${tag}"
+                local remote_image="${registry}/${image_name}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    if docker tag "$remote_image" "$image_name"; then
+                        log_info "  ✓ Tagged as $image_name"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("$service")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("$service")
-            fi
-        done
-        echo
-        
-        # Phase 4: Pull special images (multi-stage build targets, etc.)
-        # These are images that don't have their own src/ directory
-        log_info "=== Phase 4: Special images (tag: $tag) ==="
-        local special_images=(
-            "backend-init"    # Multi-stage build target from backend
-        )
-        for special in "${special_images[@]}"; do
-            total_count=$((total_count + 1))
-            local image_name="ai-infra-${special}:${tag}"
-            local remote_image="${registry}/${image_name}"
+            done
+            echo
             
-            log_info "[$total_count] $remote_image"
-            
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                if docker tag "$remote_image" "$image_name"; then
-                    log_info "  ✓ Pulled and tagged as $image_name"
-                    success_count=$((success_count + 1))
+            # Phase 4: Pull special images (multi-stage build targets, etc.)
+            # These are images that don't have their own src/ directory
+            log_info "=== Phase 4: Special images (tag: $tag) ==="
+            local special_images=(
+                "backend-init"    # Multi-stage build target from backend
+            )
+            for special in "${special_images[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${special}:${tag}"
+                local remote_image="${registry}/${image_name}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    if docker tag "$remote_image" "$image_name"; then
+                        log_info "  ✓ Pulled and tagged as $image_name"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("special:$special")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("special:$special")
-            fi
-        done
-        echo
+            done
+            echo
+        fi
     fi
     
     log_info "=========================================="
@@ -4166,16 +5682,29 @@ pull_common_images() {
         total_count=$((total_count + 1))
         log_info "[$total_count/${#COMMON_IMAGES[@]}] Pulling: $image"
         
-        # Check if image already exists locally
+        # Check if image already exists locally with correct architecture
         if docker image inspect "$image" &>/dev/null; then
-            log_info "  ✓ Already exists: $image"
-            success_count=$((success_count + 1))
-            continue
+            local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
+            local expected_arch="${DOCKER_HOST_PLATFORM##*/}"
+            if [[ "$existing_arch" == "$expected_arch" ]]; then
+                log_info "  ✓ Already exists: $image (arch: $existing_arch)"
+                success_count=$((success_count + 1))
+                continue
+            else
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch), re-pulling..."
+                docker rmi "$image" >/dev/null 2>&1 || true
+            fi
         fi
         
         if pull_image_with_retry "$image" "$max_retries"; then
-            log_info "  ✓ Pulled: $image"
-            success_count=$((success_count + 1))
+            # Verify the image was actually pulled
+            if docker image inspect "$image" &>/dev/null; then
+                log_info "  ✓ Pulled and verified: $image"
+                success_count=$((success_count + 1))
+            else
+                log_error "  ✗ Pull reported success but image not found: $image"
+                failed_images+=("$image")
+            fi
         else
             log_warn "  ✗ Failed: $image"
             failed_images+=("$image")
@@ -4194,16 +5723,29 @@ pull_common_images() {
         total_count=$((total_count + 1))
         log_info "[SafeLine] Pulling: $image"
         
-        # Check if image already exists locally
+        # Check if image already exists locally with correct architecture
         if docker image inspect "$image" &>/dev/null; then
-            log_info "  ✓ Already exists: $image"
-            success_count=$((success_count + 1))
-            continue
+            local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
+            local expected_arch="${DOCKER_HOST_PLATFORM##*/}"
+            if [[ "$existing_arch" == "$expected_arch" ]]; then
+                log_info "  ✓ Already exists: $image (arch: $existing_arch)"
+                success_count=$((success_count + 1))
+                continue
+            else
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch), re-pulling..."
+                docker rmi "$image" >/dev/null 2>&1 || true
+            fi
         fi
         
         if pull_image_with_retry "$image" "$max_retries"; then
-            log_info "  ✓ Pulled: $image"
-            success_count=$((success_count + 1))
+            # Verify the image was actually pulled
+            if docker image inspect "$image" &>/dev/null; then
+                log_info "  ✓ Pulled and verified: $image"
+                success_count=$((success_count + 1))
+            else
+                log_error "  ✗ Pull reported success but image not found: $image"
+                failed_images+=("$image")
+            fi
         else
             log_warn "  ✗ Failed: $image"
             failed_images+=("$image")
@@ -4224,37 +5766,77 @@ pull_common_images() {
 }
 
 # ==============================================================================
-# Push Functions - 镜像推送功能 (使用通用重试器 docker_with_retry)
+# Push Functions - 镜像推送功能 (支持多架构)
 # ==============================================================================
 
-# Push single service image
-# Args: $1 = service, $2 = tag, $3 = registry
+# Push single service image for specific platform
+# Args: $1 = service, $2 = tag, $3 = registry, $4 = max_retries, $5 = platform (optional), $6 = arch_tag (optional)
+#
+# Platform and arch_tag behavior:
+#   - platform: Determines which local image to push (e.g., ai-infra-xxx:v0.3.8-amd64)
+#   - arch_tag: Controls whether remote tag includes architecture suffix
+#     - "true" (default when platform set): Remote tag includes arch suffix (Harbor mode)
+#     - "false": Remote tag without arch suffix (Docker Hub mode, uses multi-manifest)
+#
+# Examples:
+#   push_service backend v0.3.8 docker.io/user 3 amd64 true   # -> docker.io/user/ai-infra-backend:v0.3.8-amd64
+#   push_service backend v0.3.8 docker.io/user 3 amd64 false  # -> docker.io/user/ai-infra-backend:v0.3.8
+#   push_service backend v0.3.8 docker.io/user 3              # -> docker.io/user/ai-infra-backend:v0.3.8
 push_service() {
     local service="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local registry="$3"
     local max_retries="${4:-$DEFAULT_MAX_RETRIES}"
+    local platform="${5:-}"      # Optional: amd64, arm64, or empty
+    local arch_tag="${6:-true}"  # Whether to include arch suffix in remote tag
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push"
         return 1
     fi
     
-    local base_image="ai-infra-${service}:${tag}"
-    local target_image="$registry/ai-infra-${service}:${tag}"
+    # Determine image names based on platform
+    local arch_suffix=""
+    local remote_arch_suffix=""
+    if [[ -n "$platform" ]]; then
+        # Normalize platform name for local image
+        case "$platform" in
+            linux/amd64|amd64|x86_64) 
+                arch_suffix="-amd64"
+                ;;
+            linux/arm64|arm64|aarch64) 
+                arch_suffix="-arm64"
+                ;;
+        esac
+        # Only add arch suffix to remote tag if arch_tag is true
+        if [[ "$arch_tag" == "true" ]]; then
+            remote_arch_suffix="$arch_suffix"
+        fi
+    fi
     
-    log_info "Pushing service: $service"
+    local base_image="ai-infra-${service}:${tag}${arch_suffix}"
+    local target_image="$registry/ai-infra-${service}:${tag}${remote_arch_suffix}"
+    
+    log_info "Pushing service: $service${arch_suffix:+ ($arch_suffix)}"
     log_info "  Source: $base_image"
     log_info "  Target: $target_image"
+    if [[ -n "$platform" ]] && [[ "$arch_tag" == "false" ]]; then
+        log_info "  Mode: Docker Hub (no arch suffix in remote tag)"
+    fi
     
     # Check if source image exists
     if ! docker image inspect "$base_image" >/dev/null 2>&1; then
         log_warn "Local image not found: $base_image"
-        log_info "Building image first..."
-        if ! build_component "$service"; then
-            log_failure "BUILD" "$base_image" "Build failed before push"
-            return 1
+        if [[ -n "$platform" ]]; then
+            log_info "Hint: Build with './build.sh $service --platform=${platform##*/}'"
+        else
+            log_info "Building image first..."
+            if ! build_component "$service"; then
+                log_failure "BUILD" "$base_image" "Build failed before push"
+                return 1
+            fi
         fi
+        return 1
     fi
     
     # Tag for registry with retry
@@ -4280,20 +5862,36 @@ push_service() {
 #   Phase 1: Common images (original tags) - for general use
 #   Phase 2: Dependency images (project tag) - for version-controlled deployment
 #   Phase 3: Project services (project tag) - the main application images
-# Args: $1 = registry, $2 = tag
+# Args: $1 = registry, $2 = tag, $3 = max_retries, $4 = platforms (optional), $5 = arch_tag (optional)
 #
 # For Harbor/private registries, registry path should include project name:
 #   ✓ harbor.example.com/ai-infra    (correct - includes project)
 #   ✗ harbor.example.com             (wrong - missing project)
+#
+# Multi-architecture support (方案一):
+#   Default: builds both amd64 and arm64, pushes without arch suffix (Docker Hub mode).
+#   Use --arch-tag for Harbor (remote tag with arch suffix like v0.3.8-amd64).
+#   
+#   Usage examples:
+#   ./build.sh push-all docker.io/user v0.3.8                                           # Docker Hub: v0.3.8 (default)
+#   ./build.sh push-all docker.io/user v0.3.8 --platform=amd64                          # Docker Hub: v0.3.8 (single arch)
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                   # Harbor: v0.3.8-amd64, v0.3.8-arm64
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64 --arch-tag  # Harbor: v0.3.8-amd64
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local platforms="${4:-}"    # Optional: amd64,arm64 or empty for unified tag
+    local arch_tag="${5:-false}" # Whether to include arch suffix in remote tag (--arch-tag sets to true)
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
-        log_info "Usage: $0 push-all <registry/project> [tag]"
-        log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8"
+        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64] [--arch-tag]"
+        log_info ""
+        log_info "Examples:"
+        log_info "  $0 push-all docker.io/user v0.3.8                                        # Docker Hub: v0.3.8 (default)"
+        log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64                       # Docker Hub: single arch"
+        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                # Harbor: v0.3.8-amd64, v0.3.8-arm64"
         return 1
     fi
     
@@ -4305,12 +5903,50 @@ push_all_services() {
     # Ensure registry ends without trailing slash
     registry="${registry%/}"
     
+    # Parse platforms parameter (--platform=amd64,arm64 -> amd64,arm64)
+    local platforms_value=""
+    if [[ -n "$platforms" ]]; then
+        if [[ "$platforms" == --platform=* ]]; then
+            platforms_value="${platforms#--platform=}"
+        else
+            platforms_value="$platforms"
+        fi
+    fi
+    
+    # Normalize and parse platforms into array
+    local -a PLATFORM_ARRAY=()
+    if [[ -n "$platforms_value" ]]; then
+        IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms_value"
+        # Normalize platform names
+        for i in "${!PLATFORM_ARRAY[@]}"; do
+            local p="${PLATFORM_ARRAY[$i]}"
+            case "$p" in
+                linux/amd64|amd64|x86_64) PLATFORM_ARRAY[$i]="amd64" ;;
+                linux/arm64|arm64|aarch64) PLATFORM_ARRAY[$i]="arm64" ;;
+                *)
+                    log_warn "Unknown platform: $p, skipping..."
+                    unset 'PLATFORM_ARRAY[$i]'
+                    ;;
+            esac
+        done
+    fi
+    
     log_info "=========================================="
     log_info "Pushing ALL images to registry"
     log_info "=========================================="
     log_info "Registry: $registry"
     log_info "Tag: $tag"
     log_info "Max retries: $max_retries"
+    if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+        log_info "Platforms: ${PLATFORM_ARRAY[*]}"
+        if [[ "$arch_tag" == "true" ]]; then
+            log_info "Mode: Multi-arch with arch suffix (Harbor mode: v0.3.8-amd64)"
+        else
+            log_info "Mode: Multi-arch without arch suffix (Docker Hub mode: v0.3.8)"
+        fi
+    else
+        log_info "Mode: Unified tags (no platform specified)"
+    fi
     echo
     
     discover_services
@@ -4319,144 +5955,214 @@ push_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Phase 1: Push common/third-party images with original tags
-    log_info "=== Phase 1: Common/third-party images (original tags) ==="
-    log_info "These images keep their original tags for general compatibility"
-    echo
-    for image in "${COMMON_IMAGES[@]}"; do
-        total_count=$((total_count + 1))
+    # If platforms specified, iterate through each platform
+    if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+        for platform in "${PLATFORM_ARRAY[@]}"; do
+            log_info "=========================================="
+            log_info "Processing platform: $platform"
+            log_info "=========================================="
+            echo
+            
+            # Determine remote tag based on arch_tag setting
+            local remote_tag_display="${tag}"
+            if [[ "$arch_tag" == "true" ]]; then
+                remote_tag_display="${tag}-${platform}"
+            fi
+            
+            # Phase 3 (only for multi-arch): Push project services
+            log_info "=== Project services (remote tag: ${remote_tag_display}) ==="
+            log_info "Main application images built from src/*"
+            echo
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                total_count=$((total_count + 1))
+                
+                if push_service "$service" "$tag" "$registry" "$max_retries" "$platform" "$arch_tag"; then
+                    log_info "  ✓ $service (${platform}) pushed"
+                    success_count=$((success_count + 1))
+                else
+                    failed_services+=("$service-${platform}")
+                fi
+            done
+            echo
+            
+            # Phase 4 (multi-arch): Push special images
+            log_info "=== Special images (remote tag: ${remote_tag_display}) ==="
+            echo
+            local special_images=(
+                "backend-init"
+            )
+            for special in "${special_images[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${special}:${tag}-${platform}"
+                # Determine target image based on arch_tag
+                local target_image
+                if [[ "$arch_tag" == "true" ]]; then
+                    target_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                else
+                    target_image="${registry}/ai-infra-${special}:${tag}"
+                fi
+                
+                log_info "[$total_count] $image_name -> $target_image"
+                
+                if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                    log_warn "  ✗ Source image not found: $image_name"
+                    log_info "    Hint: Build with '--platform=${platform}'"
+                    failed_services+=("special:${special}-${platform}")
+                    continue
+                fi
+                
+                if ! docker tag "$image_name" "$target_image"; then
+                    log_warn "  ✗ Failed to tag: $target_image"
+                    failed_services+=("special:${special}-${platform}")
+                    continue
+                fi
+                
+                if push_image_with_retry "$target_image" "$max_retries"; then
+                    log_info "  ✓ Pushed"
+                    success_count=$((success_count + 1))
+                else
+                    failed_services+=("special:${special}-${platform}")
+                fi
+            done
+            echo
+        done
         
-        # Extract image name without tag for target naming
-        local image_name="${image%%:*}"
-        local image_tag="${image##*:}"
-        # Remove registry prefix if any (e.g., confluentinc/cp-kafka -> cp-kafka)
-        local short_name="${image_name##*/}"
-        local target_image="${registry}/${short_name}:${image_tag}"
+        # For multi-arch mode, we skip Phase 1 and Phase 2 (common/dependency images)
+        # These are pulled from Docker Hub and don't need arch suffix in our tag scheme
+        log_info "Note: Common and dependency images are architecture-agnostic and"
+        log_info "      should be pushed separately without platform suffix using:"
+        log_info "      ./build.sh push-all $registry $tag"
+        echo
+    else
+        # Original unified tag mode (no platform specified)
         
-        log_info "[$total_count] $image -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "  Pulling source image..."
-            if ! pull_image_with_retry "$image" "$max_retries"; then
-                log_warn "  ✗ Failed to pull: $image"
+        # Phase 1: Push common/third-party images with original tags
+        log_info "=== Phase 1: Common/third-party images (original tags) ==="
+        log_info "These images keep their original tags for general compatibility"
+        echo
+        for image in "${COMMON_IMAGES[@]}"; do
+            total_count=$((total_count + 1))
+            
+            local image_name="${image%%:*}"
+            local image_tag="${image##*:}"
+            local short_name="${image_name##*/}"
+            local target_image="${registry}/${short_name}:${image_tag}"
+            
+            log_info "[$total_count] $image -> $target_image"
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                log_info "  Pulling source image..."
+                if ! pull_image_with_retry "$image" "$max_retries"; then
+                    log_warn "  ✗ Failed to pull: $image"
+                    failed_services+=("common:$image")
+                    continue
+                fi
+            fi
+            
+            if ! docker tag "$image" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
                 failed_services+=("common:$image")
                 continue
             fi
-        fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("common:$image")
+            fi
+        done
+        echo
         
-        # Tag for registry
-        if ! docker tag "$image" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("common:$image")
-            continue
-        fi
-        
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("common:$image")
-        fi
-    done
-    echo
-    
-    # Phase 2: Push dependency images with project tag
-    log_info "=== Phase 2: Dependency images (tag: $tag) ==="
-    log_info "These images are tagged with project version for version-controlled deployment"
-    echo
-    local dependencies=($(get_dependency_mappings))
-    for mapping in "${dependencies[@]}"; do
-        total_count=$((total_count + 1))
-        
-        local source_image="${mapping%%|*}"
-        local short_name="${mapping##*|}"
-        local target_image="${registry}/${short_name}:${tag}"
-        
-        log_info "[$total_count] $source_image -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$source_image" >/dev/null 2>&1; then
-            log_info "  Pulling source image..."
-            if ! pull_image_with_retry "$source_image" "$max_retries"; then
-                log_warn "  ✗ Failed to pull: $source_image"
+        # Phase 2: Push dependency images with project tag
+        log_info "=== Phase 2: Dependency images (tag: $tag) ==="
+        log_info "These images are tagged with project version for version-controlled deployment"
+        echo
+        local dependencies=($(get_dependency_mappings))
+        for mapping in "${dependencies[@]}"; do
+            total_count=$((total_count + 1))
+            
+            local source_image="${mapping%%|*}"
+            local short_name="${mapping##*|}"
+            local target_image="${registry}/${short_name}:${tag}"
+            
+            log_info "[$total_count] $source_image -> $target_image"
+            
+            if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+                log_info "  Pulling source image..."
+                if ! pull_image_with_retry "$source_image" "$max_retries"; then
+                    log_warn "  ✗ Failed to pull: $source_image"
+                    failed_services+=("dep:$short_name")
+                    continue
+                fi
+            fi
+            
+            if ! docker tag "$source_image" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
                 failed_services+=("dep:$short_name")
                 continue
             fi
-        fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("dep:$short_name")
+            fi
+        done
+        echo
         
-        # Tag for registry with project tag
-        if ! docker tag "$source_image" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("dep:$short_name")
-            continue
-        fi
+        # Phase 3: Push project services (unified tags)
+        log_info "=== Phase 3: Project services (tag: $tag) ==="
+        log_info "Main application images built from src/*"
+        echo
+        for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+            total_count=$((total_count + 1))
+            
+            if push_service "$service" "$tag" "$registry" "$max_retries"; then
+                log_info "  ✓ $service pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("$service")
+            fi
+        done
+        echo
         
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("dep:$short_name")
-        fi
-    done
-    echo
-    
-    # Phase 3: Push project services
-    log_info "=== Phase 3: Project services (tag: $tag) ==="
-    log_info "Main application images built from src/*"
-    echo
-    for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
-        total_count=$((total_count + 1))
-        
-        if push_service "$service" "$tag" "$registry" "$max_retries"; then
-            log_info "  ✓ $service pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("$service")
-        fi
-    done
-    echo
-    
-    # Phase 4: Push special images (multi-stage build targets, etc.)
-    log_info "=== Phase 4: Special images (tag: $tag) ==="
-    log_info "Images from multi-stage builds that don't have their own src/ directory"
-    echo
-    local special_images=(
-        "backend-init"    # Multi-stage build target from backend
-    )
-    for special in "${special_images[@]}"; do
-        total_count=$((total_count + 1))
-        local image_name="ai-infra-${special}:${tag}"
-        local target_image="${registry}/${image_name}"
-        
-        log_info "[$total_count] $image_name -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$image_name" >/dev/null 2>&1; then
-            log_warn "  ✗ Source image not found: $image_name"
-            log_info "    Hint: Build with 'docker compose build backend-init'"
-            failed_services+=("special:$special")
-            continue
-        fi
-        
-        # Tag for registry
-        if ! docker tag "$image_name" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("special:$special")
-            continue
-        fi
-        
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("special:$special")
-        fi
-    done
-    echo
+        # Phase 4: Push special images (multi-stage build targets, etc.)
+        log_info "=== Phase 4: Special images (tag: $tag) ==="
+        log_info "Images from multi-stage builds that don't have their own src/ directory"
+        echo
+        local special_images=(
+            "backend-init"
+        )
+        for special in "${special_images[@]}"; do
+            total_count=$((total_count + 1))
+            local image_name="ai-infra-${special}:${tag}"
+            local target_image="${registry}/${image_name}"
+            
+            log_info "[$total_count] $image_name -> $target_image"
+            
+            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                log_warn "  ✗ Source image not found: $image_name"
+                log_info "    Hint: Build with 'docker compose build backend-init'"
+                failed_services+=("special:$special")
+                continue
+            fi
+            
+            if ! docker tag "$image_name" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
+                failed_services+=("special:$special")
+                continue
+            fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("special:$special")
+            fi
+        done
+        echo
+    fi
     
     log_info "=========================================="
     log_info "Push completed: $success_count/$total_count successful"
@@ -4980,6 +6686,216 @@ build_parallel() {
     return 0
 }
 
+# Parallel build for a specific platform
+# Usage: build_parallel_for_platform <platform> <services...> [-- extra_args...]
+# Example: build_parallel_for_platform linux/amd64 nginx backend frontend -- --build-arg FOO=bar
+build_parallel_for_platform() {
+    local platform="$1"
+    shift
+    
+    local services=()
+    local extra_args=()
+    local found_separator=false
+    
+    # Parse arguments: services before --, extra args after --
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            found_separator=true
+            continue
+        fi
+        if [[ "$found_separator" == "true" ]]; then
+            extra_args+=("$arg")
+        else
+            services+=("$arg")
+        fi
+    done
+    
+    if [[ ${#services[@]} -eq 0 ]]; then
+        log_warn "No services to build in parallel"
+        return 0
+    fi
+    
+    local arch_name="${platform##*/}"
+    local max_jobs="${PARALLEL_JOBS:-4}"
+    local total=${#services[@]}
+    local completed=0
+    local failed=0
+    local pids=()
+    local service_map=()
+    
+    log_parallel "🚀 [$arch_name] Starting parallel build: $total services, max $max_jobs concurrent jobs"
+    log_parallel "[$arch_name] Services: ${services[*]}"
+    
+    # Create log directory for parallel build output
+    local parallel_log_dir="/tmp/ai-infra-parallel-build-$$"
+    mkdir -p "$parallel_log_dir"
+    
+    # Build services in batches
+    for service in "${services[@]}"; do
+        # Wait if we've reached max concurrent jobs
+        while [[ ${#pids[@]} -ge $max_jobs ]]; do
+            # Wait for any job to complete
+            local new_pids=()
+            local new_map=()
+            for i in "${!pids[@]}"; do
+                if kill -0 "${pids[$i]}" 2>/dev/null; then
+                    new_pids+=("${pids[$i]}")
+                    new_map+=("${service_map[$i]}")
+                else
+                    wait "${pids[$i]}" 2>/dev/null
+                    local exit_code=$?
+                    local svc="${service_map[$i]}"
+                    if [[ $exit_code -eq 0 ]]; then
+                        completed=$((completed + 1))
+                        log_parallel "[$arch_name] ✓ Completed: $svc ($completed/$total)"
+                    else
+                        failed=$((failed + 1))
+                        log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+                        # Show tail of log file for failed build
+                        local logfile="$parallel_log_dir/${svc}-${arch_name}.log"
+                        if [[ -f "$logfile" ]]; then
+                            log_error "[$arch_name]    Last 20 lines of build log:"
+                            tail -20 "$logfile" | while read line; do
+                                log_error "[$arch_name]    $line"
+                            done
+                        fi
+                    fi
+                fi
+            done
+            pids=("${new_pids[@]}")
+            service_map=("${new_map[@]}")
+            sleep 0.5
+        done
+        
+        # Start new build job in background with output logged to file
+        log_parallel "[$arch_name] 🔨 Starting: $service"
+        local logfile="$parallel_log_dir/${service}-${arch_name}.log"
+        (
+            if [[ ${#extra_args[@]} -gt 0 ]]; then
+                build_component_for_platform "$service" "$platform" "${extra_args[@]}" 2>&1 | tee "$logfile"
+                exit ${PIPESTATUS[0]}
+            else
+                build_component_for_platform "$service" "$platform" 2>&1 | tee "$logfile"
+                exit ${PIPESTATUS[0]}
+            fi
+        ) &
+        pids+=($!)
+        service_map+=("$service")
+    done
+    
+    # Wait for remaining jobs
+    log_parallel "[$arch_name] ⏳ Waiting for remaining builds to complete..."
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}" 2>/dev/null
+        local exit_code=$?
+        local svc="${service_map[$i]}"
+        if [[ $exit_code -eq 0 ]]; then
+            completed=$((completed + 1))
+            log_parallel "[$arch_name] ✓ Completed: $svc ($completed/$total)"
+        else
+            failed=$((failed + 1))
+            log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+            # Show tail of log file for failed build
+            local logfile="$parallel_log_dir/${svc}-${arch_name}.log"
+            if [[ -f "$logfile" ]]; then
+                log_error "[$arch_name]    Last 20 lines of build log:"
+                tail -20 "$logfile" | while read line; do
+                    log_error "[$arch_name]    $line"
+                done
+            fi
+        fi
+    done
+    
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_parallel "[$arch_name] 📊 Parallel Build Summary: $completed succeeded, $failed failed, $total total"
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # =========================================================================
+    # POST-BUILD VERIFICATION: Check if images were actually loaded to daemon
+    # 
+    # Due to potential race conditions with docker-container driver's --load,
+    # some images may not be properly loaded. We verify and retry if needed.
+    # =========================================================================
+    local tag="${IMAGE_TAG:-latest}"
+    local missing_services=()
+    
+    log_parallel "[$arch_name] 🔍 Verifying images were loaded to Docker daemon..."
+    for service in "${services[@]}"; do
+        local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+        if ! docker image inspect "$expected_image" >/dev/null 2>&1; then
+            missing_services+=("$service")
+            log_warn "[$arch_name]    ⚠️  Image not found: $expected_image"
+        else
+            # Also verify the architecture is correct
+            local loaded_arch=$(docker image inspect "$expected_image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            if [[ "$loaded_arch" != "$arch_name" ]]; then
+                missing_services+=("$service")
+                log_warn "[$arch_name]    ⚠️  Image has wrong architecture: $expected_image (expected: $arch_name, got: $loaded_arch)"
+            fi
+        fi
+    done
+    
+    # If some images are missing, retry them serially
+    if [[ ${#missing_services[@]} -gt 0 ]]; then
+        log_warn "[$arch_name] ⚠️  ${#missing_services[@]} images not found in Docker daemon after parallel build"
+        log_parallel "[$arch_name] 🔄 Retrying missing services serially..."
+        
+        local retry_failed=0
+        for service in "${missing_services[@]}"; do
+            log_parallel "[$arch_name]    → Retrying: $service"
+            if [[ ${#extra_args[@]} -gt 0 ]]; then
+                if build_component_for_platform "$service" "$platform" "${extra_args[@]}"; then
+                    # Verify image exists after retry
+                    local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+                    if docker image inspect "$expected_image" >/dev/null 2>&1; then
+                        log_parallel "[$arch_name]    ✓ Retry succeeded: $service"
+                    else
+                        log_error "[$arch_name]    ✗ Retry completed but image still not found: $service"
+                        retry_failed=$((retry_failed + 1))
+                    fi
+                else
+                    log_error "[$arch_name]    ✗ Retry failed: $service"
+                    retry_failed=$((retry_failed + 1))
+                fi
+            else
+                if build_component_for_platform "$service" "$platform"; then
+                    # Verify image exists after retry
+                    local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+                    if docker image inspect "$expected_image" >/dev/null 2>&1; then
+                        log_parallel "[$arch_name]    ✓ Retry succeeded: $service"
+                    else
+                        log_error "[$arch_name]    ✗ Retry completed but image still not found: $service"
+                        retry_failed=$((retry_failed + 1))
+                    fi
+                else
+                    log_error "[$arch_name]    ✗ Retry failed: $service"
+                    retry_failed=$((retry_failed + 1))
+                fi
+            fi
+        done
+        
+        if [[ $retry_failed -gt 0 ]]; then
+            failed=$((failed + retry_failed))
+            log_error "[$arch_name] ❌ $retry_failed service(s) failed even after serial retry"
+        else
+            log_parallel "[$arch_name] ✓ All missing services recovered via serial retry"
+            failed=0  # Reset failed count since we recovered
+        fi
+    fi
+    
+    # Clean up log directory if all builds succeeded
+    if [[ $failed -eq 0 ]]; then
+        rm -rf "$parallel_log_dir" 2>/dev/null || true
+    else
+        log_warn "[$arch_name] Build logs saved to: $parallel_log_dir"
+    fi
+    
+    if [[ $failed -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # Multi-Architecture Build Support
 # Uses docker buildx to build images for multiple platforms
 # Requires: docker buildx (included in Docker Desktop, or install separately)
@@ -5093,7 +7009,97 @@ _ensure_qemu_installed() {
     fi
 }
 
+# Generate advanced buildkit config with mirrors, proxy and insecure registries
+# This is critical for environments with custom proxies and registry mirrors
+_generate_buildkit_config_with_proxy() {
+    local output_file="$1"
+    local daemon_json="${HOME}/.docker/daemon.json"
+    
+    # Initialize config with basic settings
+    cat > "$output_file" << 'EOF'
+# Auto-generated buildkit config for registry mirrors and proxy support
+debug = false
+
+[worker.oci]
+  # Use overlayfs snapshotter for better performance
+EOF
+    
+    # Extract and add proxy settings if present in daemon.json
+    if [[ -f "$daemon_json" ]]; then
+        local http_proxy=$(grep -o '"httpProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        local https_proxy=$(grep -o '"httpsProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        local no_proxy=$(grep -o '"noProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        
+        if [[ -n "$http_proxy" || -n "$https_proxy" ]]; then
+            cat >> "$output_file" << EOF
+
+[buildkitd]
+  # Proxy settings for pulling images and running RUN commands
+EOF
+            if [[ -n "$http_proxy" ]]; then
+                echo "  httpProxy = \"$http_proxy\"" >> "$output_file"
+            fi
+            if [[ -n "$https_proxy" ]]; then
+                echo "  httpsProxy = \"$https_proxy\"" >> "$output_file"
+            fi
+            if [[ -n "$no_proxy" ]]; then
+                echo "  noProxy = \"$no_proxy\"" >> "$output_file"
+            fi
+        fi
+        
+        # Extract registry mirrors - these are the acceleration mirrors configured in daemon.json
+        local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+')
+        local is_insecure_registry=$(grep -o '"insecure-registries"' "$daemon_json" 2>/dev/null | wc -l)
+        
+        if [[ -n "$mirrors" ]]; then
+            # Get first mirror as the primary acceleration endpoint
+            local first_mirror=$(echo "$mirrors" | head -1)
+            local mirror_host=$(echo "$first_mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+            local is_http=$(echo "$first_mirror" | grep -c "^http://")
+            
+            # Configure docker.io to use the primary mirror
+            # This tells BuildKit to use the mirror for docker.io requests
+            cat >> "$output_file" << EOF
+
+# Registry configuration for Docker Hub acceleration
+[registry."docker.io"]
+  # Use the configured mirror as the primary endpoint
+  # BuildKit will try this mirror first for docker.io requests
+  mirrors = ["$mirror_host"]
+
+# Configure the mirror itself as a registry endpoint
+[registry."$mirror_host"]
+EOF
+            if [[ "$is_http" -gt 0 ]]; then
+                echo "  http = true" >> "$output_file"
+            fi
+            
+            # Mark as insecure if configured in daemon.json
+            if grep -q "\"$mirror_host\"" "$daemon_json"; then
+                echo "  insecure = true" >> "$output_file"
+            fi
+        fi
+        
+        # Also configure registry-1.docker.io (used by some images) to use the same mirror
+        if [[ -n "$mirrors" ]]; then
+            local first_mirror=$(echo "$mirrors" | head -1)
+            local mirror_host=$(echo "$first_mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+            
+            cat >> "$output_file" << EOF
+
+# Also redirect registry-1.docker.io to mirror
+[registry."registry-1.docker.io"]
+  mirrors = ["$mirror_host"]
+EOF
+        fi
+    fi
+    
+    log_info "Generated advanced buildkit config: $output_file"
+    return 0
+}
+
 # Generate buildkit config with registry mirrors from Docker daemon.json
+# (Legacy version, kept for compatibility)
 _generate_buildkit_config() {
     local output_file="$1"
     local daemon_json="${HOME}/.docker/daemon.json"
@@ -5536,6 +7542,152 @@ build_for_platform() {
     build_multiarch "$platform" "$force"
 }
 
+# ==============================================================================
+# Unified Image Tag Management (方案一：统一镜像标签)
+# ==============================================================================
+# 
+# Strategy: 
+# - All builds produce architecture-suffixed images: ai-infra-xxx:v0.3.8-amd64, ai-infra-xxx:v0.3.8-arm64
+# - After build, create unified tags for native architecture: ai-infra-xxx:v0.3.8 -> ai-infra-xxx:v0.3.8-arm64
+# - docker-compose uses unified tags (without suffix)
+# - start-all checks if images match local CPU architecture
+#
+# Benefits:
+# - Can store both architectures on the same machine
+# - Easy to export specific architecture for deployment
+# - Clear architecture identification via image tag
+
+# Create unified tags for native architecture
+# Maps ai-infra-xxx:tag-arch to ai-infra-xxx:tag for docker-compose compatibility
+# Usage: create_unified_tags_for_native <arch> <tag>
+create_unified_tags_for_native() {
+    local arch="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local created=0
+    local skipped=0
+    local failed=0
+    
+    # Find all ai-infra images with architecture suffix
+    local arch_pattern=":${tag}-${arch}"
+    local images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "ai-infra" | grep "$arch_pattern" || true)
+    
+    if [[ -z "$images" ]]; then
+        log_warn "No ai-infra images found with tag pattern: ${arch_pattern}"
+        return 0
+    fi
+    
+    log_info "Found $(echo "$images" | wc -l | tr -d ' ') images to tag"
+    
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        
+        # Extract base image name (remove architecture suffix)
+        # ai-infra-nginx:v0.3.8-arm64 -> ai-infra-nginx:v0.3.8
+        local unified_tag="${image%-${arch}}"
+        
+        # Check if unified tag already exists and matches
+        local existing_id=$(docker images -q "$unified_tag" 2>/dev/null || true)
+        local source_id=$(docker images -q "$image" 2>/dev/null || true)
+        
+        if [[ -n "$existing_id" ]] && [[ "$existing_id" == "$source_id" ]]; then
+            log_info "  ⏭️  Skip (same): $unified_tag"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        
+        if docker tag "$image" "$unified_tag" 2>/dev/null; then
+            log_info "  ✓ Tagged: $image -> $unified_tag"
+            created=$((created + 1))
+        else
+            log_warn "  ✗ Failed: $image -> $unified_tag"
+            failed=$((failed + 1))
+        fi
+    done <<< "$images"
+    
+    log_info "Unified tags: $created created, $skipped skipped, $failed failed"
+}
+
+# Check if local images match the native CPU architecture
+# Returns 0 if all images match, 1 if mismatch detected
+check_images_architecture() {
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    local tag="${IMAGE_TAG:-latest}"
+    local compose_cmd=$(detect_compose_command)
+    
+    log_info "Checking image architectures for native platform: $native_arch"
+    
+    # Get list of ai-infra images from docker-compose
+    local images=$($compose_cmd config --images 2>/dev/null | grep "ai-infra" | sort -u || true)
+    
+    if [[ -z "$images" ]]; then
+        log_warn "No ai-infra images found in docker-compose config"
+        return 0
+    fi
+    
+    local total=0
+    local matched=0
+    local mismatched=0
+    local missing=0
+    local mismatch_list=()
+    local missing_list=()
+    
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        total=$((total + 1))
+        
+        # Check if image exists
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            missing=$((missing + 1))
+            missing_list+=("$image")
+            continue
+        fi
+        
+        # Get image architecture
+        local image_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+        
+        if [[ "$image_arch" == "$native_arch" ]]; then
+            matched=$((matched + 1))
+        else
+            mismatched=$((mismatched + 1))
+            mismatch_list+=("$image ($image_arch)")
+        fi
+    done <<< "$images"
+    
+    log_info "Architecture check: $matched/$total matched ($native_arch)"
+    
+    # Report missing images
+    if [[ $missing -gt 0 ]]; then
+        log_warn "Missing $missing images:"
+        for img in "${missing_list[@]}"; do
+            log_warn "  - $img"
+        done
+    fi
+    
+    # Report mismatched images
+    if [[ $mismatched -gt 0 ]]; then
+        log_error "Found $mismatched images with wrong architecture:"
+        for img in "${mismatch_list[@]}"; do
+            log_error "  - $img"
+        done
+        log_error ""
+        log_error "Your machine is $native_arch, but some images are built for different architecture."
+        log_error "Options to fix:"
+        log_error "  1. Rebuild for native: ./build.sh build-all"
+        log_error "  2. Rebuild for specific arch: ./build.sh build-all --platform=$native_arch"
+        log_error "  3. Tag existing arch images: docker tag ai-infra-xxx:${tag}-${native_arch} ai-infra-xxx:${tag}"
+        return 1
+    fi
+    
+    if [[ $missing -gt 0 ]]; then
+        log_warn "Some images are missing. Run: ./build.sh build-all"
+        # Don't fail on missing - docker-compose will handle it
+    fi
+    
+    log_info "✓ All images match native architecture ($native_arch)"
+    return 0
+}
+
 # Build all services for multiple platforms sequentially
 # This is an enhanced version of build_all that builds for each platform
 # Usage: build_all_multiplatform <platforms> [force]
@@ -5570,9 +7722,18 @@ build_all_multiplatform() {
     echo
     
     # Setup buildx builder
-    if ! setup_buildx_builder; then
-        log_error "Failed to setup buildx builder"
-        return 1
+    # 跨平台构建使用 docker-container driver（已在 all 命令中设置）
+    # 原生构建使用默认的 docker driver（继承镜像配置）
+    if [[ "$CROSS_PLATFORM_BUILD" == "true" ]]; then
+        # 跨平台构建：使用之前设置的 multiarch-builder
+        log_info "Checking QEMU emulation for cross-platform builds..."
+        _ensure_qemu_installed
+        log_info "✓ Using buildx builder: default (docker driver, inherits mirror config)"
+    else
+        if ! setup_buildx_builder; then
+            log_error "Failed to setup buildx builder"
+            return 1
+        fi
     fi
     echo
     
@@ -5590,30 +7751,47 @@ build_all_multiplatform() {
     log_info "Build Session: $CURRENT_BUILD_ID"
     echo
     
-    # Phase 0: Render all templates
-    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    # ==========================================================================
+    # Phase 1: 准备 - 渲染模板、预取镜像、处理依赖
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 1: Preparation (Templates, Base Images, Dependencies)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    
+    # 1.1 Render all templates
+    log_info "  [1.1] Rendering Dockerfile Templates..."
     if ! render_all_templates "$force"; then
         log_error "Template rendering failed. Aborting build."
         return 1
     fi
     echo
     
-    # Phase 0.5: Prefetch base images for all platforms
-    log_info "=== Phase 0.5: Prefetching Base Images (Multi-Platform) ==="
+    # 1.2 Prefetch base images for all platforms
+    log_info "  [1.2] Prefetching Base Images (Multi-Platform)..."
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
-        log_info "Prefetching base images for $arch_name..."
+        log_info "    Prefetching base images for $arch_name..."
         prefetch_base_images_for_platform "$platform"
     done
     echo
     
-    # Discover services
+    # 1.2.5 Pull common/third-party images used in docker-compose.yml
+    # These images (mysql, redis, victoriametrics, etc.) are NOT in Dockerfiles
+    # but are directly referenced in docker-compose.yml
+    log_info "  [1.2.5] Pulling Common/Third-party Images (docker-compose dependencies)..."
+    if ! pull_common_images "$DEFAULT_MAX_RETRIES"; then
+        log_warn "  ⚠️  Some common images failed to pull, services may fail to start"
+        log_warn "  💡 You can retry later with: ./build.sh pull-common"
+    fi
+    echo
+    
+    # 1.3 Discover and process dependency services
     discover_services
     
-    # Phase 1: Pull & Tag Dependency Services for all platforms
-    log_info "=== Phase 1: Processing Dependency Services (Multi-Platform) ==="
+    log_info "  [1.3] Processing Dependency Services..."
     for service in "${DEPENDENCY_SERVICES[@]}"; do
-        log_info "Processing dependency: $service"
+        log_info "    Processing dependency: $service"
         for platform in "${normalized_platforms[@]}"; do
             local arch_name="${platform##*/}"
             pull_dependency_for_platform "$service" "$platform"
@@ -5621,53 +7799,641 @@ build_all_multiplatform() {
     done
     echo
     
-    # Phase 2: Build Foundation Services for each platform
-    log_info "=== Phase 2: Building Foundation Services (Multi-Platform) ==="
-    for platform in "${normalized_platforms[@]}"; do
-        local arch_name="${platform##*/}"
-        log_info "━━━ Building Foundation Services for $arch_name ━━━"
-        for service in "${FOUNDATION_SERVICES[@]}"; do
-            build_component_for_platform "$service" "$platform"
-        done
-    done
-    echo
+    # Detect native platform for later use
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    local tag="${IMAGE_TAG:-latest}"
     
-    # Phase 3: Start AppHub Service (native platform only for serving files)
-    log_info "=== Phase 3: Starting AppHub Service ==="
+    # Check if native platform is in target platforms
+    local has_native_platform=false
+    for platform in "${normalized_platforms[@]}"; do
+        local arch="${platform##*/}"
+        if [[ "$arch" == "$native_arch" ]]; then
+            has_native_platform=true
+            break
+        fi
+    done
+    
+    # ==========================================================================
+    # Phase 2: 构建 - 构建所有服务镜像（新架构：先构建所有基础服务，再统一启动AppHub）
+    # ==========================================================================
+    # 新流程说明：
+    # 1. 先构建所有架构的 Foundation Services（包括 AppHub）
+    # 2. AppHub 镜像包含所有架构的包（SaltStack/SLURM deb/rpm）
+    # 3. 只启动一个原生架构的 AppHub 实例
+    # 4. 使用该 AppHub 为所有架构的依赖服务提供包
+    # 
+    # 优点：
+    # - 无需在构建过程中切换 AppHub
+    # - 避免 QEMU 模拟运行 AppHub 的性能问题
+    # - 简化构建流程
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🔨 Phase 2: Build All Services (Multi-Platform)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Platforms: ${normalized_platforms[*]}"
+    if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
+        log_info "⚙️  Multi-arch build: AppHub will be built for all platforms, then started once"
+    fi
+    
+    # --------------------------------------------------------------------------
+    # Pre-build Summary: Show which components will be built or skipped
+    # --------------------------------------------------------------------------
+    if [[ "$FORCE_REBUILD" != "true" ]]; then
+        log_info ""
+        log_info "📋 Pre-build Analysis (checking existing images)..."
+        local to_build=()
+        local to_skip=()
+        
+        # AppHub 只检查原生架构
+        local apphub_rebuild_reason=$(need_rebuild_for_platform "apphub" "linux/${native_arch}" "$tag")
+        if [[ "$apphub_rebuild_reason" == "NO_CHANGE" ]]; then
+            to_skip+=("apphub:$native_arch (native only)")
+        else
+            to_build+=("apphub:$native_arch ($apphub_rebuild_reason) [builds deb+rpm for all archs]")
+        fi
+        
+        # 其他服务检查所有平台
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                # 跳过 apphub，已经单独处理
+                [[ "$service" == "apphub" ]] && continue
+                
+                local rebuild_reason=$(need_rebuild_for_platform "$service" "$platform" "$tag")
+                if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+                    to_skip+=("$service:$arch_name")
+                else
+                    to_build+=("$service:$arch_name ($rebuild_reason)")
+                fi
+            done
+        done
+        
+        if [[ ${#to_skip[@]} -gt 0 ]]; then
+            log_cache "  ⏭️  Will skip ${#to_skip[@]} component(s): ${to_skip[*]}"
+        fi
+        if [[ ${#to_build[@]} -gt 0 ]]; then
+            log_info "  🔧 Will build ${#to_build[@]} component(s)"
+            for item in "${to_build[@]}"; do
+                log_info "      → $item"
+            done
+        fi
+        
+        if [[ ${#to_build[@]} -eq 0 ]]; then
+            log_info ""
+            log_info "✅ All components are up-to-date! No rebuild needed."
+            log_info "   Use --force to rebuild anyway: ./build.sh --force all --platform=${platforms}"
+            return 0
+        fi
+        echo
+    fi
+    
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
-        log_error "docker-compose not found! Cannot start AppHub."
+        log_error "docker-compose not found! Cannot manage AppHub."
         return 1
     fi
     
-    # Ensure we have native platform AppHub running
-    local native_platform=$(_detect_docker_platform)
-    log_info "Starting AppHub container (native: $native_platform)..."
-    $compose_cmd up -d apphub
-    
-    if ! wait_for_apphub_ready 300; then
-        log_error "AppHub failed to start. Aborting build."
-        return 1
+    # Stop any existing AppHub before multi-platform build to ensure clean state
+    if docker ps -q -f name=ai-infra-apphub 2>/dev/null | grep -q .; then
+        log_info "🛑 Stopping existing AppHub container before build..."
+        $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm -f ai-infra-apphub 2>/dev/null || true
+        log_info "   ✓ Existing AppHub stopped"
     fi
-    echo
     
-    # Phase 4: Build Dependent Services for each platform
-    log_info "=== Phase 4: Building Dependent Services (Multi-Platform) ==="
     local apphub_port="${APPHUB_PORT:-28080}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
     
-    log_info "Using AppHub URL for builds: $apphub_url"
+    # --------------------------------------------------------------------------
+    # Phase 2.1: Build ALL Foundation Services for ALL platforms first
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 2.1: Build Foundation Services (All Platforms)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Validate FOUNDATION_SERVICES array
+    log_info "  Foundation services to build: ${FOUNDATION_SERVICES[*]}"
+    if [[ ${#FOUNDATION_SERVICES[@]} -eq 0 ]]; then
+        log_error "  ❌ FOUNDATION_SERVICES is empty! Check discover_services function."
+        return 1
+    fi
+    
+    # Ensure apphub is in FOUNDATION_SERVICES (required for dependent builds)
+    local apphub_in_foundation=false
+    for svc in "${FOUNDATION_SERVICES[@]}"; do
+        if [[ "$svc" == "apphub" ]]; then
+            apphub_in_foundation=true
+            break
+        fi
+    done
+    if [[ "$apphub_in_foundation" != "true" ]]; then
+        log_error "  ❌ 'apphub' is not in FOUNDATION_SERVICES!"
+        log_error "     This is likely a configuration error."
+        log_error "     Check: src/apphub/build.conf should contain BUILD_PHASE=foundation"
+        return 1
+    fi
+    
+    local foundation_build_failed=false
+    
+    # ===========================================================================
+    # AppHub 特殊处理：只构建一次（原生架构）
+    # ===========================================================================
+    # AppHub 的 Dockerfile 使用多阶段构建：
+    # - deb-builder (Ubuntu) 构建 deb 包 - 架构无关的包构建
+    # - rpm-builder (AlmaLinux) 构建 rpm 包 - 架构无关的包构建
+    # - 最终 nginx 镜像只需要运行在原生架构
+    #
+    # 因此，AppHub 只需要在原生架构构建一次，内部的 deb/rpm 包可以服务所有架构
+    # ===========================================================================
+    log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+    log_info "┃ 🏗️  Building AppHub (Native Architecture Only: $native_arch)"
+    log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+    log_info "    📦 AppHub 内部构建 deb/rpm 包（适用于所有架构）"
+    log_info "    📦 只需在原生架构构建一次，避免重复构建"
+    
+    if ! build_component_for_platform "apphub" "linux/${native_arch}"; then
+        log_error "    ❌ Failed to build apphub for $native_arch"
+        foundation_build_failed=true
+    fi
+    echo
+    
+    # ===========================================================================
+    # 构建其他 Foundation Services（所有平台）
+    # ===========================================================================
+    # 过滤掉 apphub，构建其他 foundation 服务
+    local other_foundation_services=()
+    for svc in "${FOUNDATION_SERVICES[@]}"; do
+        if [[ "$svc" != "apphub" ]]; then
+            other_foundation_services+=("$svc")
+        fi
+    done
+    
+    if [[ ${#other_foundation_services[@]} -gt 0 ]]; then
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            
+            log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+            log_info "┃ 🏗️  Building Other Foundation Services for [$arch_name]"
+            log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+            
+            if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#other_foundation_services[@]} -gt 1 ]]; then
+                log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
+                if ! build_parallel_for_platform "$platform" "${other_foundation_services[@]}"; then
+                    log_error "    ❌ Some foundation services failed to build for $arch_name"
+                    foundation_build_failed=true
+                fi
+            else
+                for service in "${other_foundation_services[@]}"; do
+                    log_info "    → Building $service for $arch_name..."
+                    if ! build_component_for_platform "$service" "$platform"; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        foundation_build_failed=true
+                    fi
+                done
+            fi
+            echo
+        done
+    fi
+    
+    # Check if any foundation service build failed
+    if [[ "$foundation_build_failed" == "true" ]]; then
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_error "❌ Some foundation services failed to build."
+        log_error "   Please check the build logs above for details."
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        # Don't return immediately - continue to check AppHub specifically
+    fi
+    
+    # Check if ANY AppHub image exists (required for Phase 2.3)
+    # AppHub contains packages for ALL architectures, so we can use any available AppHub
+    # Priority: 1) Target platform AppHub, 2) Native platform AppHub, 3) Any AppHub
+    local apphub_built=false
+    local apphub_available_arch=""
+    
+    # First, check target platforms
+    for platform in "${normalized_platforms[@]}"; do
+        local arch="${platform##*/}"
+        local apphub_image="ai-infra-apphub:${tag}-${arch}"
+        if docker image inspect "$apphub_image" >/dev/null 2>&1; then
+            apphub_built=true
+            apphub_available_arch="$arch"
+            log_info "  ✓ AppHub image found: $apphub_image"
+            break
+        fi
+    done
+    
+    # If not found, check native platform (e.g., arm64 on Mac)
+    if [[ "$apphub_built" != "true" ]]; then
+        local native_apphub="ai-infra-apphub:${tag}-${native_arch}"
+        if docker image inspect "$native_apphub" >/dev/null 2>&1; then
+            apphub_built=true
+            apphub_available_arch="$native_arch"
+            log_info "  ✓ AppHub image found (native arch): $native_apphub"
+            log_info "    📦 AppHub contains packages for ALL architectures, can be used for cross-platform builds"
+        fi
+    fi
+    
+    # Last resort: check for any AppHub with matching tag
+    if [[ "$apphub_built" != "true" ]]; then
+        local any_apphub=$(docker images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | grep "ai-infra-apphub:${tag}" | head -1)
+        if [[ -n "$any_apphub" ]]; then
+            apphub_built=true
+            # Extract arch from tag - handle both cases: with and without arch suffix
+            if [[ "$any_apphub" == *"-arm64" ]] || [[ "$any_apphub" == *"-amd64" ]]; then
+                apphub_available_arch="${any_apphub##*-}"
+            else
+                # No arch suffix, assume native arch
+                apphub_available_arch="$native_arch"
+            fi
+            log_info "  ✓ AppHub image found (fallback): $any_apphub (arch: $apphub_available_arch)"
+        fi
+    fi
+    
+    if [[ "$apphub_built" != "true" ]]; then
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_error "❌ CRITICAL: No AppHub image found!"
+        log_error "   AppHub is required to serve packages for dependent services."
+        log_error ""
+        log_error "   Debug steps:"
+        log_error "   1. Check build logs above for AppHub errors"
+        log_error "   2. Build AppHub for native arch first: ./build.sh apphub --platform=${native_arch}"
+        log_error "   3. Check AppHub Dockerfile: src/apphub/Dockerfile"
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 1
+    fi
+    
+    # --------------------------------------------------------------------------
+    # Phase 2.2: Start ONE AppHub instance (native architecture preferred)
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🚀 Phase 2.2: Start AppHub (Single Instance for All Architectures)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # First, ensure Docker environment is clean (fix network label issues, etc.)
+    ensure_clean_docker_state
+    
+    # Clean up any existing AppHub container
+    if docker ps -a --filter "name=^ai-infra-apphub$" --format "{{.ID}}" | grep -q .; then
+        log_info "  🧹 Removing existing AppHub container..."
+        docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm -f ai-infra-apphub 2>/dev/null || true
+    fi
+    
+    # Decide which AppHub image to use (with fallback logic)
+    local apphub_image_to_use=""
+    local apphub_platform=""
+    local apphub_arch_selected=""
+    
+    # Try to find an available AppHub image in order of preference:
+    # 1. Native architecture with suffix (ai-infra-apphub:v0.3.8-arm64)
+    # 2. Native architecture without suffix (ai-infra-apphub:v0.3.8)
+    # 3. First platform in the build list
+    # 4. Any available AppHub image
+    
+    if [[ "$has_native_platform" == "true" ]]; then
+        # First try with arch suffix
+        local native_image="ai-infra-apphub:${tag}-${native_arch}"
+        if docker image inspect "$native_image" >/dev/null 2>&1; then
+            apphub_image_to_use="$native_image"
+            apphub_platform="linux/${native_arch}"
+            apphub_arch_selected="$native_arch"
+            log_info "  📌 Using native architecture AppHub: $apphub_image_to_use"
+        else
+            # Try without arch suffix (legacy format)
+            local legacy_image="ai-infra-apphub:${tag}"
+            if docker image inspect "$legacy_image" >/dev/null 2>&1; then
+                apphub_image_to_use="$legacy_image"
+                apphub_platform="linux/${native_arch}"
+                apphub_arch_selected="$native_arch"
+                log_info "  📌 Using native architecture AppHub (legacy tag): $apphub_image_to_use"
+            fi
+        fi
+    fi
+    
+    # Fallback: try each platform in the build list
+    if [[ -z "$apphub_image_to_use" ]]; then
+        for platform in "${normalized_platforms[@]}"; do
+            local arch="${platform##*/}"
+            local test_image="ai-infra-apphub:${tag}-${arch}"
+            if docker image inspect "$test_image" >/dev/null 2>&1; then
+                apphub_image_to_use="$test_image"
+                apphub_platform="linux/${arch}"
+                apphub_arch_selected="$arch"
+                log_warn "  ⚠️  Native AppHub not available, using: $apphub_image_to_use"
+                break
+            fi
+        done
+    fi
+    
+    # Last resort: find any AppHub image with matching tag
+    if [[ -z "$apphub_image_to_use" ]]; then
+        local any_apphub=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "ai-infra-apphub:${tag}" | head -1)
+        if [[ -n "$any_apphub" ]]; then
+            apphub_image_to_use="$any_apphub"
+            # Extract arch from tag (e.g., v0.3.8-amd64 -> amd64)
+            # Handle both cases: with arch suffix and without
+            if [[ "$any_apphub" == *"-arm64" ]] || [[ "$any_apphub" == *"-amd64" ]]; then
+                apphub_arch_selected="${any_apphub##*-}"
+            else
+                # No arch suffix, assume native arch
+                apphub_arch_selected="$native_arch"
+            fi
+            apphub_platform="linux/${apphub_arch_selected}"
+            log_warn "  ⚠️  Using available AppHub image: $apphub_image_to_use (arch: $apphub_arch_selected)"
+        fi
+    fi
+    
+    # Verify we found an AppHub image
+    if [[ -z "$apphub_image_to_use" ]]; then
+        log_error "  ❌ No AppHub image found for tag: ${tag}"
+        log_error "     Available images:"
+        docker images --format "  {{.Repository}}:{{.Tag}}" | grep apphub || echo "     (none)"
+        log_error ""
+        log_error "     Please build AppHub first:"
+        log_error "       ./build.sh build-platform linux/${native_arch} apphub"
+        return 1
+    fi
+    
+    # Start AppHub
+    log_info "  🚀 Starting AppHub..."
+    
+    # Tag the arch-specific image to the name expected by docker-compose
+    # docker-compose.yml uses: ai-infra-apphub:v0.3.8 (without arch suffix)
+    # But we built: ai-infra-apphub:v0.3.8-arm64 (with arch suffix)
+    local compose_expected_image="${PRIVATE_REGISTRY:-}ai-infra-apphub:${tag}"
+    if [[ "$apphub_image_to_use" != "$compose_expected_image" ]]; then
+        log_info "  🏷️  Tagging $apphub_image_to_use -> $compose_expected_image"
+        if ! docker tag "$apphub_image_to_use" "$compose_expected_image" 2>/dev/null; then
+            log_warn "  ⚠️  Failed to tag image, docker-compose may try to build"
+        fi
+    fi
+    
+    # 创建网络时添加 compose 标签，避免后续 docker compose 报错
+    if ! docker network inspect ai-infra-network >/dev/null 2>&1; then
+        docker network create \
+            --label "com.docker.compose.network=ai-infra-network" \
+            --label "com.docker.compose.project=ai-infra-matrix" \
+            ai-infra-network 2>/dev/null || true
+    fi
+    
+    # Determine if we should use docker-compose or docker run
+    # Use docker-compose for native platform (better integration)
+    # But only if the architecture matches - otherwise use docker run with --platform
+    if [[ "$apphub_arch_selected" == "$native_arch" ]]; then
+        # Use docker-compose for native platform (better integration)
+        # --no-build: Use pre-built image, don't try to build
+        # This prevents docker-compose from hanging while trying to build
+        local compose_output
+        if ! compose_output=$($compose_cmd up -d --no-build apphub 2>&1); then
+            log_error "  ❌ Failed to start AppHub via docker-compose"
+            log_error "  Error: $compose_output"
+            # Fallback to direct docker run
+            log_info "  🔄 Fallback: Trying direct docker run..."
+            docker run -d \
+                --name ai-infra-apphub \
+                --platform "$apphub_platform" \
+                --network ai-infra-network \
+                -p "${apphub_port}:80" \
+                -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                --restart unless-stopped \
+                "$apphub_image_to_use"
+            
+            if [[ $? -ne 0 ]]; then
+                log_error "  ❌ Failed to start AppHub with fallback method"
+                return 1
+            fi
+        fi
+        # Only show output if it contains errors or warnings
+        if echo "$compose_output" | grep -qiE "error|fail|warn"; then
+            log_warn "  ⚠️  docker-compose output: $compose_output"
+        fi
+    else
+        # Use docker run for cross-platform (via QEMU/Rosetta)
+        # Ensure the container is removed if it already exists
+        docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm ai-infra-apphub 2>/dev/null || true
+        
+        docker run -d \
+            --name ai-infra-apphub \
+            --platform "$apphub_platform" \
+            --network ai-infra-network \
+            -p "${apphub_port}:80" \
+            -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+            -v "${SCRIPT_DIR}/src:/app/src:ro" \
+            --restart unless-stopped \
+            "$apphub_image_to_use"
+        
+        if [[ $? -ne 0 ]]; then
+            log_error "  ❌ Failed to start AppHub"
+            return 1
+        fi
+    fi
+    
+    # Wait for AppHub to be ready
+    log_info "  ⏳ Waiting for AppHub to be ready..."
+    if ! wait_for_apphub_ready 300; then
+        log_error "  ❌ AppHub failed to become ready. Aborting build."
+        return 1
+    fi
+    
+    # Record which architecture's AppHub is currently running
+    local current_apphub_arch="$apphub_arch_selected"
+    log_info "  ✓ AppHub is ready at $apphub_url (arch: $current_apphub_arch)"
+    echo
+    
+    # --------------------------------------------------------------------------
+    # Phase 2.3: Build Dependent Services for ALL platforms
+    # --------------------------------------------------------------------------
+    # 架构匹配说明：
+    # - AppHub 中的 SLURM 包是架构相关的（arm64 包只能用于 arm64 构建）
+    # - 当构建目标架构与当前 AppHub 架构不匹配时：
+    #   方案 A: 切换到对应架构的 AppHub（通过 QEMU/Rosetta）
+    #   方案 B: 启用系统回退 ALLOW_SYSTEM_SLURM=true
+    # 
+    # Mac ARM64 特殊性：
+    # - Mac 有 Rosetta 转译层，可以高效运行 amd64 容器
+    # - 在 Mac 上切换 AppHub 架构是可行的
+    # 
+    # Linux ARM64：
+    # - 需要 QEMU 模拟运行 amd64 容器（较慢）
+    # - 建议使用系统回退或在原生机器上构建
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 2.3: Build Dependent Services (All Platforms)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "  Using AppHub URL: $apphub_url"
+    log_info "  Current AppHub arch: $current_apphub_arch"
+    
+    # Detect if running on macOS (has Rosetta for efficient cross-arch)
+    local is_macos=false
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        is_macos=true
+        log_info "  🍎 Running on macOS (Rosetta available for cross-arch)"
+    fi
+    echo
     
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
-        log_info "━━━ Building Dependent Services for $arch_name ━━━"
-        for service in "${DEPENDENT_SERVICES[@]}"; do
-            build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
-        done
+        local need_apphub_switch=false
+        local use_system_fallback=false
+        
+        log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+        log_info "┃ 🏗️  Building Dependent Services for [$arch_name]"
+        log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+        
+        # Check if target arch matches current AppHub arch
+        if [[ "$arch_name" != "$current_apphub_arch" ]]; then
+            log_warn "    ⚠️  Target arch ($arch_name) differs from AppHub arch ($current_apphub_arch)"
+            
+            # Check if we have the target arch's AppHub image
+            local target_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
+            if docker image inspect "$target_apphub_image" >/dev/null 2>&1; then
+                if [[ "$is_macos" == "true" ]]; then
+                    # On macOS, we can switch AppHub efficiently via Rosetta
+                    log_info "    🔄 Switching AppHub to $arch_name (via Rosetta/QEMU)..."
+                    need_apphub_switch=true
+                else
+                    # On Linux, QEMU is slower, prefer system fallback
+                    log_warn "    📦 Using system SLURM fallback (QEMU would be slow)"
+                    use_system_fallback=true
+                fi
+            else
+                # No target arch AppHub image, must use system fallback
+                log_warn "    📦 AppHub image for $arch_name not found, using system fallback"
+                use_system_fallback=true
+            fi
+        fi
+        
+        # Switch AppHub if needed
+        if [[ "$need_apphub_switch" == "true" ]]; then
+            log_info "    🧹 Stopping current AppHub..."
+            $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+            $compose_cmd rm -f apphub 2>/dev/null || docker rm -f ai-infra-apphub 2>/dev/null || true
+            
+            local target_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
+            log_info "    🚀 Starting AppHub for $arch_name..."
+            
+            # Use direct docker run for cross-platform AppHub
+            docker run -d \
+                --name ai-infra-apphub \
+                --platform "linux/$arch_name" \
+                --network ai-infra-network \
+                -p "${apphub_port}:80" \
+                -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                --restart unless-stopped \
+                "$target_apphub_image"
+            
+            if [[ $? -ne 0 ]]; then
+                log_warn "    ⚠️  Failed to start $arch_name AppHub, using system fallback"
+                use_system_fallback=true
+            else
+                log_info "    ⏳ Waiting for AppHub to be ready..."
+                if wait_for_apphub_ready 180; then
+                    current_apphub_arch="$arch_name"
+                    log_info "    ✓ AppHub switched to $arch_name and ready"
+                else
+                    log_warn "    ⚠️  AppHub not ready after 180 seconds, using system fallback"
+                    use_system_fallback=true
+                    
+                    # As a last resort, try to start the native arch AppHub again
+                    log_info "    🔄 Attempting to revert to native AppHub ($current_apphub_arch)..."
+                    docker stop ai-infra-apphub 2>/dev/null || true
+                    docker rm -f ai-infra-apphub 2>/dev/null || true
+                    
+                    # Try to start the original arch AppHub
+                    local original_apphub_image="ai-infra-apphub:${tag}-${current_apphub_arch}"
+                    docker run -d \
+                        --name ai-infra-apphub \
+                        --platform "linux/$current_apphub_arch" \
+                        --network ai-infra-network \
+                        -p "${apphub_port}:80" \
+                        -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                        -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                        --restart unless-stopped \
+                        "$original_apphub_image"
+                    
+                    if wait_for_apphub_ready 180; then
+                        log_info "    ✓ Reverted to native AppHub and ready"
+                    else
+                        log_error "    ❌ Reverted AppHub also not ready, this will cause build failures"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Determine SLURM build args
+        local slurm_build_args="--build-arg APPHUB_URL=$apphub_url"
+        if [[ "$use_system_fallback" == "true" ]]; then
+            slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
+            log_info "    📦 System SLURM fallback enabled for $arch_name"
+        elif ! check_apphub_slurm_available "$arch_name"; then
+            log_warn "    ⚠️  SLURM packages for $arch_name not available in AppHub, enabling system fallback"
+            slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
+        else
+            log_info "    ✓ AppHub SLURM packages available for $arch_name"
+        fi
+        
+        local dependent_build_failed=false
+        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
+            log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
+            # For parallel builds, we need to pass ALLOW_SYSTEM_SLURM for ALL services
+            # because slurm-master will be built in parallel with others
+            # The extra arg will be ignored by non-slurm services
+            local parallel_extra_args="--build-arg APPHUB_URL=$apphub_url"
+            if ! check_apphub_slurm_available "$arch_name"; then
+                parallel_extra_args="$parallel_extra_args --build-arg ALLOW_SYSTEM_SLURM=true"
+                log_info "    📦 ALLOW_SYSTEM_SLURM=true will be used for slurm-master"
+            fi
+            if ! build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- $parallel_extra_args; then
+                log_error "    ❌ Some dependent services failed to build for $arch_name"
+                dependent_build_failed=true
+            fi
+        else
+            for service in "${DEPENDENT_SERVICES[@]}"; do
+                log_info "    → Building $service for $arch_name..."
+                # Use slurm_build_args for slurm-master, regular args for others
+                if [[ "$service" == "slurm-master" ]]; then
+                    if ! build_component_for_platform "$service" "$platform" $slurm_build_args; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        dependent_build_failed=true
+                    fi
+                else
+                    if ! build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        dependent_build_failed=true
+                    fi
+                fi
+            done
+        fi
+        
+        if [[ "$dependent_build_failed" == "true" ]]; then
+            log_warn "    ⚠️  Some dependent services failed to build for $arch_name"
+        fi
+        echo
     done
+    
+    # ==========================================================================
+    # Phase 3: 完成 - 创建统一标签
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🏷️  Phase 3: Finalize (Create Unified Tags)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     
+    if [[ "$has_native_platform" == "true" ]]; then
+        log_info "Creating unified tags for native architecture: $native_arch"
+        create_unified_tags_for_native "$native_arch" "$tag"
+    else
+        log_warn "Native architecture ($native_arch) was not built."
+        log_warn "To start services on this machine, you need to build for $native_arch first."
+        log_info "Or manually tag images: docker tag ai-infra-xxx:${tag}-<arch> ai-infra-xxx:${tag}"
+    fi
+    echo
+
     # Build summary
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "🎉 Multi-Platform Build Session $CURRENT_BUILD_ID Completed"
@@ -5675,49 +8441,212 @@ build_all_multiplatform() {
     log_info "Platforms built: ${normalized_platforms[*]}"
     log_info ""
     log_info "📋 Next steps:"
+    log_info "   Start services: ./build.sh start-all"
     log_info "   Export for offline: ./build.sh export-offline ./offline ${IMAGE_TAG:-latest} true ${platforms}"
     log_info ""
     log_info "View build history: ./build.sh build-history"
 }
 
 # Helper: Prefetch base images for a specific platform
-# Includes all base images used by AI-Infra services including apphub
+# Dynamically discovers and prefetches all base images from Dockerfiles
+# Features:
+#   - Renders all Dockerfile templates first
+#   - Extracts base images dynamically from src/*/Dockerfile
+#   - No hardcoded image list - all from actual Dockerfiles
+#   - Retry mechanism with exponential backoff
+# Args: $1 = platform (e.g., linux/amd64, linux/arm64)
+#       $2 = max_retries (default 5)
+#       $3 = retry_delay (default 10)
 prefetch_base_images_for_platform() {
     local platform="$1"
+    local max_retries="${2:-5}"
+    local retry_delay="${3:-10}"
     local arch_name="${platform##*/}"
     
-    # Get base images from Dockerfile templates and component Dockerfiles
-    # This includes apphub's Ubuntu/AlmaLinux builders and service base images
-    local base_images=(
-        # AppHub base images (multi-stage builder)
-        "ubuntu:22.04"
-        "almalinux:9.3-minimal"
-        # Common service base images
-        "python:3.11-slim"
-        "node:20-alpine"
-        "golang:1.21-alpine"
-        "nginx:alpine"
-        "alpine:3.18"
-        "alpine:3.19"
-        # Additional base images for other services
-        "debian:bookworm-slim"
-    )
+    log_info "  [$arch_name] Phase 1: Rendering Dockerfile templates..."
     
-    log_info "  [$arch_name] Prefetching ${#base_images[@]} base images..."
-    local success_count=0
-    local fail_count=0
+    # Render all templates to ensure Dockerfiles are up-to-date
+    if ! render_all_templates false 2>/dev/null; then
+        log_warn "  [$arch_name] Template rendering had issues, continuing with existing Dockerfiles..."
+    fi
     
-    for image in "${base_images[@]}"; do
-        if docker pull --platform "$platform" "$image" >/dev/null 2>&1; then
-            log_info "    ✓ $image"
-            ((success_count++))
-        else
-            log_warn "    ✗ $image (may not be needed)"
-            ((fail_count++))
+    log_info "  [$arch_name] Phase 2: Discovering base images from Dockerfiles..."
+    
+    # Dynamically extract all base images from Dockerfiles
+    local all_base_images=()
+    local dockerfiles=()
+    
+    # Find all Dockerfiles (including rendered ones from templates)
+    while IFS= read -r dockerfile; do
+        dockerfiles+=("$dockerfile")
+    done < <(find "$SRC_DIR" -name "Dockerfile" -type f \
+        -not -path "*/node_modules/*" \
+        -not -path "*/.git/*" \
+        -not -path "*/vendor/*" \
+        -not -path "*/__pycache__/*" \
+        2>/dev/null)
+    
+    if [[ ${#dockerfiles[@]} -eq 0 ]]; then
+        log_warn "  [$arch_name] No Dockerfiles found in $SRC_DIR"
+        return 0
+    fi
+    
+    log_info "  [$arch_name] Found ${#dockerfiles[@]} Dockerfiles to scan"
+    
+    # Extract base images from all Dockerfiles
+    for dockerfile in "${dockerfiles[@]}"; do
+        local images
+        if images=$(extract_base_images "$dockerfile" 2>/dev/null); then
+            while IFS= read -r image; do
+                [[ -z "$image" ]] && continue
+                # Skip internal build stages (single word without / or :)
+                [[ "$image" =~ ^[a-z_-]+$ ]] && continue
+                all_base_images+=("$image")
+            done <<< "$images"
         fi
     done
     
-    log_info "  [$arch_name] Prefetch complete: $success_count success, $fail_count failed/skipped"
+    # Remove duplicates and sort
+    local unique_base_images=($(printf '%s\n' "${all_base_images[@]}" | sort -u))
+    
+    if [[ ${#unique_base_images[@]} -eq 0 ]]; then
+        log_warn "  [$arch_name] No base images found in Dockerfiles"
+        return 0
+    fi
+    
+    log_info "  [$arch_name] Phase 3: Prefetching ${#unique_base_images[@]} unique base images with retry..."
+    
+    # Ensure multiarch-builder exists before prefetching
+    local builder_name="multiarch-builder"
+    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        log_info "  [$arch_name] Pre-creating multiarch-builder for prefetch..."
+        
+        # Prepare BuildKit config with mirrors and proxy support
+        local buildkit_config="/tmp/buildkitd-multiarch.toml"
+        _generate_buildkit_config_with_proxy "$buildkit_config"
+        
+        # Create builder with docker-container driver and host network
+        local create_args=(
+            "--name" "$builder_name"
+            "--driver" "docker-container"
+            "--driver-opt" "network=host"
+            "--buildkitd-flags" "--allow-insecure-entitlement network.host"
+            "--bootstrap"
+        )
+        
+        # Add config file if it was generated successfully
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "  [$arch_name] Using custom buildkit config with mirrors"
+        fi
+        
+        if ! docker buildx create "${create_args[@]}" 2>&1 | grep -v "^$"; then
+            log_warn "  [$arch_name] Failed to pre-create multiarch-builder, prefetch may fail"
+        fi
+    fi
+    
+    # Pre-pull images directly using docker pull
+    # This is simpler and more reliable than using docker buildx build for prefetch
+    # Docker daemon handles mirror acceleration automatically
+    
+    local success_count=0
+    local fail_count=0
+    local skip_count=0
+    
+    for image in "${unique_base_images[@]}"; do
+        # =====================================================================
+        # CRITICAL FIX: Check if image exists WITH CORRECT ARCHITECTURE
+        # 
+        # docker image inspect doesn't check architecture!
+        # We need to verify the image's architecture matches our target platform.
+        # If architecture doesn't match, we must re-pull with --platform flag.
+        # =====================================================================
+        local image_exists=false
+        local arch_matches=false
+        
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            image_exists=true
+            # Check if the image architecture matches our target
+            local image_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            if [[ "$image_arch" == "$arch_name" ]]; then
+                arch_matches=true
+            fi
+        fi
+        
+        if [[ "$image_exists" == "true" ]] && [[ "$arch_matches" == "true" ]]; then
+            log_info "    ✓ $image (cached, arch: $arch_name)"
+            skip_count=$((skip_count + 1))
+            continue
+        elif [[ "$image_exists" == "true" ]] && [[ "$arch_matches" == "false" ]]; then
+            local current_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            log_info "    🔄 $image (exists as $current_arch, need $arch_name)"
+        fi
+        
+        log_info "    ⬇ $image"
+        
+        # Try to pull image with retries
+        local retry_count=0
+        local pulled=false
+        local pull_output=""
+        local pull_timeout="${BASE_IMAGE_PULL_TIMEOUT:-180}"  # Default 3 minutes per base image
+        
+        while [[ $retry_count -lt $max_retries ]]; do
+            retry_count=$((retry_count + 1))
+            
+            if [[ $retry_count -gt 1 ]]; then
+                local wait_time=$((retry_delay * retry_count))
+                log_warn "    🔄 Retry $retry_count/$max_retries: $image (waiting ${wait_time}s...)"
+                sleep "$wait_time"
+            fi
+            
+            # Pull image with platform specification and timeout
+            # This will use Docker daemon's configured mirrors automatically
+            if pull_output=$(timeout "$pull_timeout" docker pull --platform "$platform" "$image" 2>&1); then
+                # Check if pull succeeded
+                if echo "$pull_output" | grep -qiE "(Digest:|Status:|Downloaded|already exists)"; then
+                    log_info "    ✓ $image"
+                    success_count=$((success_count + 1))
+                    pulled=true
+                    break
+                fi
+            fi
+            
+            local exit_code=$?
+            
+            # Check for timeout first
+            if [[ $exit_code -eq 124 ]]; then
+                log_warn "    ⏱️ Timeout (>${pull_timeout}s): $image - will retry"
+                continue
+            fi
+            
+            # Pull failed - check error type
+            if echo "$pull_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused|i/o timeout"; then
+                # Network error - worth retrying
+                log_warn "    ⚠️  Network error, will retry: $image"
+                continue
+            elif echo "$pull_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
+                # Image doesn't exist in registry - don't retry
+                log_warn "    ✗ $image (not found in registry)"
+                fail_count=$((fail_count + 1))
+                pulled=false
+                break
+            else
+                # Other error - log and retry
+                local error_msg=$(echo "$pull_output" | grep -iE "error|failed" | head -1 | cut -c1-100)
+                log_warn "    ⚠️  Pull error (will retry): ${error_msg:-unknown error}"
+                continue
+            fi
+        done
+        
+        if [[ "$pulled" == false ]]; then
+            log_warn "    ✗ $image (failed after $max_retries attempts)"
+            fail_count=$((fail_count + 1))
+        fi
+    done
+    
+    log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
+    
+    return 0
 }
 
 # Helper: Pull dependency image for a specific platform
@@ -5727,6 +8656,7 @@ pull_dependency_for_platform() {
     local component_dir="$SRC_DIR/$component"
     local tag="${IMAGE_TAG:-latest}"
     local arch_name="${platform##*/}"
+    local pull_timeout="${DEPENDENCY_PULL_TIMEOUT:-120}"  # Default 2 minutes timeout per image
     
     # Check for dependency configuration
     local dep_conf="$component_dir/dependency.conf"
@@ -5744,24 +8674,32 @@ pull_dependency_for_platform() {
         return 0
     fi
     
-    # Use architecture-suffixed tag for cross-platform pulls
-    local native_platform=$(_detect_docker_platform)
-    local native_arch="${native_platform##*/}"
-    local arch_suffix=""
-    
-    if [[ "$arch_name" != "$native_arch" ]]; then
-        arch_suffix="-${arch_name}"
-    fi
+    # Use architecture-suffixed tag for ALL pulls (方案一：统一镜像管理)
+    local arch_suffix="-${arch_name}"
     
     local target_image="ai-infra-$component:${tag}${arch_suffix}"
     
-    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image"
+    # Skip if target image already exists
+    if docker image inspect "$target_image" >/dev/null 2>&1; then
+        log_info "  [$arch_name] ✓ $component (cached: $target_image)"
+        return 0
+    fi
     
-    if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image (timeout: ${pull_timeout}s)"
+    
+    # Use timeout to prevent hanging on slow/unavailable images
+    if timeout "$pull_timeout" docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
         docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
         log_info "  [$arch_name] ✓ Ready: $target_image"
     else
-        log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+        local exit_code=$?
+        if [[ $exit_code -eq 124 ]]; then
+            log_warn "  [$arch_name] ⏱️ Timeout: $upstream_image (>${pull_timeout}s) - skipping"
+        else
+            log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+        fi
+        # Don't fail the build for dependency pulls - these are optional external images
+        return 0
     fi
 }
 
@@ -5790,27 +8728,59 @@ build_component_for_platform() {
     
     # For cross-platform builds, we need docker-container driver (docker driver doesn't support cross-platform pull)
     # The docker-container driver runs buildkit in a container with QEMU support
-    local builder_name="multiarch-builder"
+    # However, docker-container driver may have network isolation issues with proxies
+    # Use intelligent builder selection to handle this
     local native_platform=$(_detect_docker_platform)
     local native_arch="${native_platform##*/}"
     
-    # Only need special builder for cross-platform builds
-    if [[ "$arch_name" != "$native_arch" ]]; then
-        if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
-            log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
-            
-            # Create builder with docker-container driver and host network
-            # Using network=host allows buildkit to access the network directly without proxy configuration
-            # This avoids DNS resolution issues with host.docker.internal in different environments
-            if ! docker buildx create --name "$builder_name" --driver docker-container \
-                --driver-opt network=host --bootstrap 2>&1; then
-                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
-                builder_name="default"
-            fi
+    # Intelligent builder selection: test network connectivity before choosing
+    # This handles the common case where docker-container driver can't access Docker Hub
+    # due to proxy misconfiguration or network isolation
+    local builder_name
+    
+    # First, ensure multiarch-builder exists
+    if ! docker buildx inspect "multiarch-builder" >/dev/null 2>&1; then
+        log_info "  [$arch_name] Creating multiarch-builder with host network support..."
+        
+        # Prepare BuildKit config with mirrors and proxy support
+        # This is needed because docker-container driver may not inherit daemon.json settings
+        local buildkit_config="/tmp/buildkitd-multiarch.toml"
+        _generate_buildkit_config_with_proxy "$buildkit_config"
+        
+        # Create builder with docker-container driver and host network
+        # Using network=host allows buildkit to access the internet for apt/yum operations
+        # For accessing docker containers (like apphub), we'll use --add-host in the build command
+        # --buildkitd-flags enables network.host entitlement for --network=host in build commands
+        # This is critical for arm64 (cross-platform) builds to avoid timeout issues
+        local create_args=(
+            "--name" "multiarch-builder"
+            "--driver" "docker-container"
+            "--driver-opt" "network=host"
+            "--buildkitd-flags" "--allow-insecure-entitlement network.host"
+            "--bootstrap"
+        )
+        
+        # Add config file if it was generated successfully
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "  [$arch_name] Using custom buildkit config with mirrors"
         fi
-    else
-        # For native platform, use default builder (faster)
-        builder_name="default"
+        
+        if ! docker buildx create "${create_args[@]}" 2>&1; then
+            log_warn "  [$arch_name] Failed to create multiarch-builder with network=host"
+            log_warn "  [$arch_name] Attempting to create with default docker-container driver..."
+            docker buildx create --name "multiarch-builder" --driver docker-container --bootstrap 2>&1 || true
+        fi
+    fi
+    
+    # Select the best builder based on network connectivity test
+    # This is critical for environments where docker-container driver has proxy issues
+    builder_name=$(_select_best_builder "$platform")
+    local select_result=$?
+    
+    if [[ $select_result -ne 0 ]]; then
+        log_warn "  [$arch_name] ⚠️  Network connectivity issues detected, build may fail"
+        log_warn "  [$arch_name]    Please check your network/proxy configuration"
     fi
     
     if [ ! -d "$component_dir" ]; then
@@ -5820,8 +8790,9 @@ build_component_for_platform() {
     
     # ===== Build Cache Check =====
     # Skip cache check if FORCE_BUILD is enabled
+    # Use platform-specific check to ensure each architecture is built independently
     if [[ "$FORCE_BUILD" != "true" ]]; then
-        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        local rebuild_reason=$(need_rebuild_for_platform "$component" "$platform" "$tag")
         if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
             log_cache "  [$arch_name] ⏭️  Skipping $component (no changes detected)"
             log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE ($arch_name)"
@@ -5925,16 +8896,10 @@ build_component_for_platform() {
         local target="${targets[$i]}"
         local image_name="${images[$i]}"
         
-        # Use architecture-suffixed tag for cross-platform builds to avoid overwriting
+        # Use architecture-suffixed tag for ALL builds (方案一：统一镜像管理)
         # This allows building and storing both amd64 and arm64 images on the same machine
-        local native_platform=$(_detect_docker_platform)
-        local native_arch="${native_platform##*/}"
-        local arch_suffix=""
-        
-        # Add architecture suffix when building for non-native platform
-        if [[ "$arch_name" != "$native_arch" ]]; then
-            arch_suffix="-${arch_name}"
-        fi
+        # After build, we'll create unified tags for the native architecture
+        local arch_suffix="-${arch_name}"
         
         local full_image_name="${image_name}:${tag}${arch_suffix}"
         
@@ -5950,7 +8915,94 @@ build_component_for_platform() {
         local cmd=("docker" "buildx" "build")
         cmd+=("--builder" "$builder_name")  # Use the detected builder for cross-platform builds
         cmd+=("--platform" "$platform")
+        
+        # Network configuration: CRITICAL for arm64 (cross-platform) builds
+        # arm64 on amd64 host needs explicit host network to avoid oauth token timeouts
+        # Both amd64 and arm64 should use host network when available (multiarch-builder)
+        if [[ "$builder_name" == "multiarch-builder" ]]; then
+            cmd+=("--network" "host")  # Allow build steps to access host network directly
+            cmd+=("--allow" "network.host")  # Grant network.host entitlement
+        fi
+        
+        # =====================================================================
+        # IMPORTANT: --load behavior differs between docker and docker-container drivers
+        # 
+        # - docker driver (desktop-linux): --load works reliably
+        # - docker-container driver (multiarch-builder): --load may have issues
+        #   especially in parallel builds or cross-platform scenarios
+        #
+        # We use --load for simplicity, but verify the result and retry if needed.
+        # For docker-container driver, --output=type=docker is equivalent to --load
+        # but some versions may handle it differently.
+        # =====================================================================
         cmd+=("--load")  # Load to local docker daemon
+        
+        # Network proxy and mirror configuration for buildx docker-container driver
+        # The buildkit container may be isolated from daemon.json settings
+        # We need to explicitly pass proxy and registry mirror configs
+        
+        # Check if daemon.json has proxy settings
+        local daemon_json="${HOME}/.docker/daemon.json"
+        if [[ -f "$daemon_json" ]]; then
+            # Extract proxy settings if present (httpProxy, httpsProxy, noProxy)
+            local http_proxy=$(grep -o '"httpProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            local https_proxy=$(grep -o '"httpsProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            local no_proxy=$(grep -o '"noProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            
+            # Pass proxy settings to build environment
+            if [[ -n "$http_proxy" ]]; then
+                cmd+=("--build-arg" "HTTP_PROXY=$http_proxy")
+                cmd+=("--build-arg" "http_proxy=$http_proxy")
+                log_info "  [$arch_name] Using HTTP proxy: $http_proxy"
+            fi
+            if [[ -n "$https_proxy" ]]; then
+                cmd+=("--build-arg" "HTTPS_PROXY=$https_proxy")
+                cmd+=("--build-arg" "https_proxy=$https_proxy")
+                log_info "  [$arch_name] Using HTTPS proxy: $https_proxy"
+            fi
+            if [[ -n "$no_proxy" ]]; then
+                cmd+=("--build-arg" "NO_PROXY=$no_proxy")
+                cmd+=("--build-arg" "no_proxy=$no_proxy")
+            fi
+        fi
+        
+        # Add environment variables from Docker daemon for registry mirrors and other settings
+        # This ensures buildkit respects the same configurations as docker daemon
+        if [[ -n "$http_proxy" || -n "$https_proxy" ]]; then
+            log_info "  [$arch_name] ⚠️  Proxy detected, may slow down image pulls"
+            log_info "  [$arch_name]   Ensure proxy server is running: http_proxy=$http_proxy"
+        fi
+        
+        # Add --add-host to map 'apphub' to the actual container IP
+        # This allows buildkit (running with host network) to access apphub container
+        local apphub_ip=""
+        local apphub_container_status=$(docker ps --filter "name=^ai-infra-apphub$" --filter "status=running" --format "{{.ID}}" 2>/dev/null || echo "")
+        
+        if [[ -z "$apphub_container_status" ]]; then
+            log_warn "  [$arch_name] ⚠️  AppHub container not running, using default hostname"
+            # Fall back to using hostname instead of IP
+            cmd+=("--add-host" "apphub:127.0.0.1")
+            log_info "  [$arch_name] Using apphub at 127.0.0.1 (fallback)"
+        else
+            # Get the first IP from the ai-infra-network
+            apphub_ip=$(docker inspect -f '{{index .NetworkSettings.Networks "ai-infra-network" .IPAddress}}' ai-infra-apphub 2>/dev/null || echo "")
+            
+            # Validate IP address format (basic check for IPv4)
+            if [[ $apphub_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                cmd+=("--add-host" "apphub:$apphub_ip")
+                log_info "  [$arch_name] Using apphub at $apphub_ip"
+            else
+                log_warn "  [$arch_name] ⚠️  Invalid AppHub IP: '$apphub_ip', using localhost fallback"
+                cmd+=("--add-host" "apphub:127.0.0.1")
+                log_info "  [$arch_name] Using apphub at 127.0.0.1 (fallback)"
+            fi
+        fi
+        
+        # For docker-container driver with host network, we also need to handle localhost properly
+        # Add docker.internal for compatibility (maps to host's localhost)
+        if [[ "$builder_name" == "multiarch-builder" ]]; then
+            cmd+=("--add-host" "host.docker.internal:127.0.0.1")
+        fi
         
         # Add --no-cache if force build is enabled
         if [[ "$FORCE_BUILD" == "true" ]]; then
@@ -5964,6 +9016,19 @@ build_component_for_platform() {
         cmd+=("--label" "build.component=$component")
         cmd+=("--label" "build.platform=$platform")
         
+        # AppHub 特殊标签：记录组件和版本信息用于智能缓存检查
+        if [[ "$component" == "apphub" ]]; then
+            local services_count=$(find "$SRC_DIR" -maxdepth 1 -type d ! -name "src" ! -name "apphub" ! -name "shared" | wc -l | tr -d ' ')
+            local slurm_tarball=$(ls -1 "$component_dir"/slurm-*.tar.bz2 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+            local munge_tarball=$(ls -1 "$SCRIPT_DIR/third_party/munge"/munge-*.tar.* 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+            local saltstack_version=$(grep -E "^ARG\s+SALTSTACK_VERSION=" "$component_dir/Dockerfile" 2>/dev/null | cut -d= -f2 || echo "")
+            
+            cmd+=("--label" "build.services_count=$services_count")
+            [[ -n "$slurm_tarball" ]] && cmd+=("--label" "build.slurm_tarball=$slurm_tarball")
+            [[ -n "$munge_tarball" ]] && cmd+=("--label" "build.munge_tarball=$munge_tarball")
+            [[ -n "$saltstack_version" ]] && cmd+=("--label" "build.saltstack_version=$saltstack_version")
+        fi
+        
         cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
         
         if [ "$target" != "default" ]; then
@@ -5975,14 +9040,112 @@ build_component_for_platform() {
         # Debug: print the actual command being executed
         # log_info "DEBUG CMD: ${cmd[*]}"
         
-        # For cross-platform builds, always show output to avoid buildkit caching issues
-        # The silent-then-retry pattern can cause metadata resolution failures
-        if "${cmd[@]}"; then
-            log_info "  [$arch_name] ✓ Built: $full_image_name"
-            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
-            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-        else
-            log_error "  [$arch_name] ✗ Failed: $full_image_name"
+        # For cross-platform builds, with network retry mechanism
+        # Handle temporary network issues and transient failures
+        local build_attempt=0
+        local max_build_attempts=3
+        local build_retry_delay=15
+        local build_success=false
+        
+        while [[ $build_attempt -lt $max_build_attempts ]]; do
+            build_attempt=$((build_attempt + 1))
+            
+            if [[ $build_attempt -gt 1 ]]; then
+                log_warn "  [$arch_name] 🔄 Build retry attempt $build_attempt/$max_build_attempts (waiting ${build_retry_delay}s)..."
+                sleep "$build_retry_delay"
+                
+                # Check network connectivity before retry
+                if ! _check_network_connectivity >/dev/null 2>&1; then
+                    log_warn "  [$arch_name] ⚠️  Network connectivity issues detected"
+                    log_warn "  [$arch_name]    Waiting additional ${build_retry_delay}s before retry..."
+                    sleep "$build_retry_delay"
+                fi
+            fi
+            
+            # Execute build command
+            if "${cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
+                # Build succeeded, now verify image was loaded WITH CORRECT ARCHITECTURE
+                if docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                    # CRITICAL: Also verify the loaded image has the correct architecture
+                    local loaded_arch=$(docker image inspect "$full_image_name" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+                    if [[ "$loaded_arch" == "$arch_name" ]]; then
+                        log_info "  [$arch_name] ✓ Built: $full_image_name (verified arch: $loaded_arch)"
+                        log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
+                        save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                        build_success=true
+                        break
+                    else
+                        log_warn "  [$arch_name] ⚠ Image loaded but wrong architecture: expected $arch_name, got $loaded_arch"
+                        log_warn "  [$arch_name]   This may be a buildx --load issue with cross-platform builds"
+                        # Don't mark as success, let it retry or fail
+                    fi
+                else
+                    log_warn "  [$arch_name] ⚠ Image not found in Docker daemon after build"
+                    if [[ $build_attempt -lt $max_build_attempts ]]; then
+                        log_warn "  [$arch_name]   Retrying with --no-cache..."
+                        # Retry with --no-cache to force re-export
+                        # Build command array carefully to avoid argument issues
+                        local retry_cmd=()
+                        local found_no_cache=false
+                        
+                        for item in "${cmd[@]}"; do
+                            if [[ "$item" == "--no-cache" ]]; then
+                                found_no_cache=true
+                            else
+                                retry_cmd+=("$item")
+                            fi
+                        done
+                        
+                        # Always add --no-cache for retry
+                        retry_cmd+=("--no-cache")
+                        
+                        # Verify command array is not empty
+                        if [[ ${#retry_cmd[@]} -gt 0 ]]; then
+                            if "${retry_cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
+                                if docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                                    # Also verify architecture after no-cache retry
+                                    local loaded_arch=$(docker image inspect "$full_image_name" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+                                    if [[ "$loaded_arch" == "$arch_name" ]]; then
+                                        log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name (verified arch: $loaded_arch)"
+                                        log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
+                                        save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                                        build_success=true
+                                        break
+                                    else
+                                        log_warn "  [$arch_name] ⚠ Image loaded but wrong architecture: expected $arch_name, got $loaded_arch"
+                                    fi
+                                fi
+                            fi
+                        else
+                            log_error "  [$arch_name] ✗ Failed to build retry command (empty array)"
+                        fi
+                    fi
+                fi
+            else
+                # Build failed - check error message to determine if it's a network issue
+                local last_error=$(tail -20 "$FAILURE_LOG" 2>/dev/null | grep -i "network\|timeout\|connection\|read" || echo "unknown error")
+                
+                if [[ $build_attempt -lt $max_build_attempts ]]; then
+                    if echo "$last_error" | grep -qiE "network|timeout|connection|read.*down"; then
+                        log_warn "  [$arch_name] ⚠️  Network/timeout error detected: $last_error"
+                        log_warn "  [$arch_name]   This may be transient, will retry..."
+                        continue
+                    else
+                        log_error "  [$arch_name] ✗ Build failed (non-network error): $last_error"
+                        log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
+                        return 1
+                    fi
+                else
+                    log_error "  [$arch_name] ✗ Failed after $max_build_attempts attempts: $full_image_name"
+                    log_error "  [$arch_name]   Last error: $last_error"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_FAILED_RETRIES ($arch_name)"
+                    return 1
+                fi
+            fi
+        done
+        
+        if [[ "$build_success" != "true" ]]; then
+            log_error "  [$arch_name] ✗ Failed: $full_image_name (after $max_build_attempts attempts)"
             log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
             return 1
         fi
@@ -5991,129 +9154,220 @@ build_component_for_platform() {
     return 0
 }
 
-build_all() {
-    local force="${1:-false}"
+# ==============================================================================
+# 自诊断和自修复系统
+# ==============================================================================
+# 在构建前对系统进行全面的诊断，并自动修复可以修复的问题
+
+# 诊断 SSL 证书
+diagnose_ssl_certificates() {
+    log_info "  📋 Checking SSL certificates..."
     
-    # Initialize build cache
-    init_build_cache
+    local ssl_dir="src/nginx/ssl"
+    local crt_file="$ssl_dir/server.crt"
+    local key_file="$ssl_dir/server.key"
     
-    # Generate build ID for this build session
-    CURRENT_BUILD_ID=$(generate_build_id)
-    save_build_id "$CURRENT_BUILD_ID"
-    
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🏗️  Build Session: $CURRENT_BUILD_ID"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    if [[ "$force" == "true" ]]; then
-        log_info "Starting coordinated build process (FORCE MODE - no cache)..."
-        FORCE_BUILD=true
-        FORCE_REBUILD=true
+    if [[ ! -f "$crt_file" ]] || [[ ! -f "$key_file" ]]; then
+        log_warn "  ⚠️  SSL certificates not found in $ssl_dir"
+        log_info "  🔧 Auto-generating SSL certificates..."
         
-        # 【防御性检查】Force 模式下检查数据库状态
-        log_info "=== Phase -2: Database Safety Check ==="
-        if ! pre_deployment_safety_check "$force"; then
-            log_error "Safety check failed or aborted. Exiting."
-            exit 1
-        fi
-        echo
-        
-        # In force mode, auto-detect and update EXTERNAL_HOST if needed
-        log_info "=== Phase -1: Verifying Network Configuration ==="
-        local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
-        local detected_host=$(detect_external_host)
-        
-        if [[ "$current_host" != "$detected_host" ]]; then
-            log_warn "EXTERNAL_HOST changed: $current_host -> $detected_host"
-            log_info "Updating .env with new IP address..."
-            update_env_variable "EXTERNAL_HOST" "$detected_host"
-            update_env_variable "DOMAIN" "$detected_host"
-            log_info "✓ EXTERNAL_HOST updated to $detected_host"
+        if setup_ssl_certificates "" false; then
+            log_info "  ✅ SSL certificates generated successfully"
+            # Rebuild nginx to bundle new certificates
+            log_info "  🔨 Rebuilding nginx with new certificates..."
+            build_component "nginx"
+            return 0
         else
-            log_info "✓ EXTERNAL_HOST is correct: $current_host"
+            log_warn "  ⚠️  Failed to generate SSL certificates (will continue without SSL)"
+            return 1
         fi
-        echo
     else
-        log_info "Starting coordinated build process..."
+        log_info "  ✅ SSL certificates found"
+        
+        # Check certificate validity
+        if command -v openssl &> /dev/null; then
+            local expiry_date=$(openssl x509 -in "$crt_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+            if [[ -n "$expiry_date" ]]; then
+                log_info "     Certificate expires: $expiry_date"
+            fi
+        fi
+        return 0
     fi
+}
+
+# 诊断 .env 文件
+diagnose_env_file() {
+    log_info "  📋 Checking environment configuration..."
     
-    # 0. Render all templates first
-    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
-    if ! render_all_templates "$force"; then
-        log_error "Template rendering failed. Aborting build."
-        exit 1
-    fi
-    echo
-    
-    # 0.5. Prefetch base images with retry
-    log_info "=== Phase 0.5: Prefetching Base Images (with retry) ==="
-    prefetch_base_images "" 3  # 3 retries
-    echo
-    
-    # Discover services dynamically
-    discover_services
-    
-    # 1. Pull & Tag Dependency Services
-    log_info "=== Phase 1: Processing Dependency Services ==="
-    for service in "${DEPENDENCY_SERVICES[@]}"; do
-        build_component "$service"
-    done
-    
-    # 2. Build Foundation Services
-    log_info "=== Phase 2: Building Foundation Services ==="
-    if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
-        log_parallel "🚀 Parallel build enabled for foundation services"
-        build_parallel "${FOUNDATION_SERVICES[@]}"
+    if [[ ! -f ".env" ]]; then
+        log_warn "  ⚠️  .env file not found"
+        log_info "  🔧 Initializing .env from .env.example..."
+        
+        if ! ./build.sh init-env; then
+            log_error "  ✗ Failed to initialize .env"
+            return 1
+        fi
+        
+        log_info "  ✅ .env file initialized"
+        return 0
     else
-        for service in "${FOUNDATION_SERVICES[@]}"; do
-            build_component "$service"
+        log_info "  ✅ .env file exists"
+        
+        # Check for required variables
+        local required_vars=("COMPOSE_PROJECT_NAME" "IMAGE_TAG" "EXTERNAL_HOST" "TZ")
+        local missing_vars=()
+        
+        for var in "${required_vars[@]}"; do
+            if ! grep -q "^$var=" .env; then
+                missing_vars+=("$var")
+            fi
         done
+        
+        if [[ ${#missing_vars[@]} -gt 0 ]]; then
+            log_warn "  ⚠️  Missing environment variables: ${missing_vars[*]}"
+            log_info "  🔧 Re-syncing .env with .env.example..."
+            
+            if ./build.sh render; then
+                log_info "  ✅ Environment variables synced"
+                return 0
+            else
+                log_warn "  ⚠️  Failed to sync .env (some variables may be missing)"
+                return 1
+            fi
+        fi
+        
+        return 0
+    fi
+}
+
+# 诊断 Docker 和 Docker Compose
+diagnose_docker() {
+    log_info "  📋 Checking Docker installation..."
+    
+    if ! command -v docker &> /dev/null; then
+        log_error "  ✗ Docker not found"
+        return 1
     fi
     
-    # 3. Start AppHub Service
-    log_info "=== Phase 3: Starting AppHub Service ==="
+    local docker_version=$(docker --version 2>/dev/null)
+    log_info "  ✅ Docker: $docker_version"
+    
+    # Check Docker daemon is running
+    if ! docker ps &>/dev/null; then
+        log_error "  ✗ Docker daemon is not running"
+        return 1
+    fi
+    
+    # Check Docker Compose
     local compose_cmd=$(detect_compose_command)
-    if [ -z "$compose_cmd" ]; then
-        log_error "docker-compose not found! Cannot start AppHub."
-        exit 1
+    if [[ -z "$compose_cmd" ]]; then
+        log_error "  ✗ Docker Compose not found"
+        return 1
     fi
     
-    log_info "Starting AppHub container..."
-    $compose_cmd up -d apphub
+    local compose_version=$($compose_cmd version 2>/dev/null | head -1)
+    log_info "  ✅ Docker Compose: $compose_version"
     
-    if ! wait_for_apphub_ready 300; then
-        log_error "AppHub failed to start. Aborting build."
-        exit 1
+    return 0
+}
+
+# 诊断镜像加速和网络配置
+diagnose_network_and_mirrors() {
+    log_info "  📋 Checking network and mirror configuration..."
+    
+    # Check daemon.json configuration
+    local daemon_json="$HOME/.docker/daemon.json"
+    if [[ -f "$daemon_json" ]]; then
+        local mirror_count=$(grep -o '"registry-mirrors"' "$daemon_json" | wc -l)
+        if [[ $mirror_count -gt 0 ]]; then
+            local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+            log_info "  ✅ Registry mirrors configured:"
+            echo "$mirrors" | while read -r mirror; do
+                log_info "     - $mirror"
+            done
+        fi
     fi
     
-    # 4. Build Dependent Services
-    log_info "=== Phase 4: Building Dependent Services ==="
-    
-    # Determine AppHub URL for build args
-    local apphub_port="${APPHUB_PORT:-28080}"
-    local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
-    local apphub_url="http://${external_host}:${apphub_port}"
-    
-    log_info "Using AppHub URL for builds: $apphub_url"
-    
-    # Check if parallel build is enabled
-    if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
-        log_parallel "🚀 Parallel build enabled (max $PARALLEL_JOBS concurrent jobs)"
-        build_parallel "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
+    # Check network connectivity
+    log_info "  📡 Testing network connectivity..."
+    if ping -c 1 8.8.8.8 &>/dev/null 2>&1; then
+        log_info "  ✅ Internet connectivity OK"
     else
-        for service in "${DEPENDENT_SERVICES[@]}"; do
-            # Pass APPHUB_URL to dependent services
-            build_component "$service" "--build-arg" "APPHUB_URL=$apphub_url"
-        done
+        log_warn "  ⚠️  Internet connectivity check failed"
     fi
     
-    # Build summary
-    local build_end_time=$(date +%s)
+    return 0
+}
+
+# 诊断磁盘空间
+diagnose_disk_space() {
+    log_info "  📋 Checking disk space..."
+    
+    local disk_usage=$(df -h . | tail -1 | awk '{print $5}')
+    local disk_available=$(df -h . | tail -1 | awk '{print $4}')
+    
+    log_info "  ✅ Disk usage: $disk_usage available: $disk_available"
+    
+    # Warn if less than 10GB available
+    local available_gb=$(df . | tail -1 | awk '{print int($4/1024/1024)}')
+    if [[ $available_gb -lt 10 ]]; then
+        log_warn "  ⚠️  Low disk space: Only ${available_gb}GB available (recommended: 50GB+)"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 诊断数据库配置
+diagnose_database() {
+    log_info "  📋 Checking database configuration..."
+    
+    local db_type=$(grep "^DB_TYPE=" .env 2>/dev/null | cut -d'=' -f2)
+    if [[ -n "$db_type" ]]; then
+        log_info "  ✅ Database type: $db_type"
+    fi
+    
+    # Check if database directory exists for local databases
+    if [[ "$db_type" == "postgres" ]]; then
+        if [[ -d "data/postgres" ]]; then
+            log_info "  ✅ PostgreSQL data directory exists"
+        else
+            log_info "  ℹ️  PostgreSQL data directory will be created on first run"
+        fi
+    fi
+    
+    return 0
+}
+
+# 主诊断函数：执行所有诊断
+pre_build_diagnosis() {
+    local auto_fix="${1:-true}"  # 是否自动修复
+    
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🎉 Build Session $CURRENT_BUILD_ID Completed Successfully"
+    log_info "🔍 Pre-Build System Diagnosis"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "View build history: ./build.sh build-history"
-    log_info "Check cache status: ./build.sh cache-status"
+    
+    local diagnosis_passed=true
+    
+    # 执行各项诊断
+    diagnose_env_file || diagnosis_passed=false
+    diagnose_docker || diagnosis_passed=false
+    diagnose_ssl_certificates || true  # SSL is optional
+    diagnose_network_and_mirrors || true  # Network issues are not fatal
+    diagnose_disk_space || diagnosis_passed=false
+    diagnose_database || true  # Database issues are not fatal
+    
+    echo ""
+    
+    if [[ "$diagnosis_passed" == "true" ]]; then
+        log_info "✅ All critical diagnostics passed"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    else
+        log_error "❌ Some critical diagnostics failed"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 1
+    fi
 }
 
 # Tag private registry images as local images
@@ -6126,6 +9380,10 @@ build_all() {
 tag_private_images_as_local() {
     local private_registry="${PRIVATE_REGISTRY:-}"
     local image_tag="${IMAGE_TAG:-v0.3.8}"
+    
+    # Detect native platform for architecture suffix handling
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
     
     # List of ai-infra images that may need tagging
     local images=(
@@ -6140,6 +9398,7 @@ tag_private_images_as_local() {
         "ai-infra-singleuser"
         "ai-infra-gitea"
         "ai-infra-nightingale"
+        "ai-infra-prometheus"
         "ai-infra-test-containers"
     )
     
@@ -6147,6 +9406,7 @@ tag_private_images_as_local() {
     local skipped=0
     
     log_info "Checking for images that need local tagging..."
+    log_info "Native architecture: $native_arch"
     
     # Mode 1: If PRIVATE_REGISTRY is configured, use it directly
     if [[ -n "$private_registry" ]]; then
@@ -6173,22 +9433,43 @@ tag_private_images_as_local() {
             fi
         done
     else
-        # Mode 2: Auto-detect registry-prefixed images
-        log_info "Auto-detecting registry-prefixed images..."
+        # Mode 2: Auto-detect registry-prefixed images AND architecture-suffixed images
+        log_info "Auto-detecting registry-prefixed and architecture-suffixed images..."
         
         for img in "${images[@]}"; do
             local local_image="${img}:${image_tag}"
             
-            # Skip if local image already exists
+            # Check if local image already exists WITH CORRECT ARCHITECTURE
             if docker image inspect "$local_image" &>/dev/null; then
-                skipped=$((skipped + 1))
-                continue
+                local existing_arch=$(docker image inspect "$local_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$existing_arch" == "$native_arch" ]]; then
+                    skipped=$((skipped + 1))
+                    continue
+                else
+                    # Image exists but wrong architecture - need to replace it
+                    log_warn "  ⚠ $local_image exists but has wrong architecture: $existing_arch (expected $native_arch)"
+                    docker rmi "$local_image" &>/dev/null || true
+                fi
             fi
             
-            # Search for any registry-prefixed version of this image
-            # Pattern: */ai-infra-xxx:tag or */*/*/ai-infra-xxx:tag
             local found_image=""
-            found_image=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "/${img}:${image_tag}$" | head -1)
+            
+            # Priority 1: Check for architecture-suffixed image (from cross-platform builds)
+            # This handles images built with --platform=amd64 on ARM64 Mac or vice versa
+            local arch_suffixed_image="${img}:${image_tag}-${native_arch}"
+            if docker image inspect "$arch_suffixed_image" &>/dev/null; then
+                # Verify architecture matches
+                local img_arch=$(docker image inspect "$arch_suffixed_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$img_arch" == "$native_arch" ]]; then
+                    found_image="$arch_suffixed_image"
+                fi
+            fi
+            
+            # Priority 2: Search for any registry-prefixed version of this image
+            # Pattern: */ai-infra-xxx:tag or */*/*/ai-infra-xxx:tag
+            if [[ -z "$found_image" ]]; then
+                found_image=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "/${img}:${image_tag}$" | head -1)
+            fi
             
             if [[ -n "$found_image" ]]; then
                 if docker tag "$found_image" "$local_image"; then
@@ -6206,7 +9487,7 @@ tag_private_images_as_local() {
     elif [[ $skipped -gt 0 ]]; then
         log_info "All $skipped images already exist locally"
     else
-        log_info "No registry-prefixed images found to tag"
+        log_info "No registry-prefixed or architecture-suffixed images found to tag"
     fi
 }
 
@@ -6251,6 +9532,84 @@ update_runtime_env() {
 # ==============================================================================
 # Database Safety Functions - 数据库安全函数
 # ==============================================================================
+
+# Sync SeaweedFS credentials from .env to database
+# This uses the backend CLI tool to encrypt credentials before writing to the database
+# SECURITY: Credentials are NEVER stored in plaintext in the database
+# Usage: sync_seaweedfs_credentials
+sync_seaweedfs_credentials() {
+    log_info "🔐 Syncing SeaweedFS credentials (encrypted) to database..."
+    
+    # 确保加载环境变量文件 (使用 SCRIPT_DIR 而不是 PROJECT_ROOT)
+    local env_file="$SCRIPT_DIR/.env"
+    if [[ ! -f "$env_file" ]]; then
+        # 尝试 .env.prod
+        if [[ -f "$SCRIPT_DIR/.env.prod" ]]; then
+            env_file="$SCRIPT_DIR/.env.prod"
+        else
+            log_warn "  ⚠ No .env or .env.prod file found in $SCRIPT_DIR, skipping SeaweedFS sync"
+            return 0
+        fi
+    fi
+    
+    # 计算 .env 文件的 MD5 用于日志
+    local env_md5=$(md5sum "$env_file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+    log_info "  → Loading environment from: $env_file (MD5: ${env_md5:0:8}...)"
+    
+    # 加载环境变量
+    set -a
+    source "$env_file"
+    set +a
+    
+    # 读取 .env 中的 SeaweedFS 配置
+    local access_key="${SEAWEEDFS_ACCESS_KEY:-}"
+    local secret_key="${SEAWEEDFS_SECRET_KEY:-}"
+    
+    # 检查必要的配置
+    if [[ -z "$access_key" ]] || [[ -z "$secret_key" ]]; then
+        log_warn "  ⚠ SeaweedFS credentials not found in .env, skipping sync"
+        return 0
+    fi
+    
+    log_info "  → SeaweedFS Access Key: ${access_key:0:8}..."
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_warn "  ⚠ PostgreSQL container not running, skipping SeaweedFS sync"
+        return 0
+    fi
+    
+    # 检查 backend 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-backend"; then
+        log_warn "  ⚠ Backend container not running, cannot use encrypted sync"
+        log_info "  → Credentials will be synced when backend starts (via seed.go)"
+        return 0
+    fi
+    
+    # 检查 backend 容器中是否有 sync-seaweedfs 工具
+    if ! docker exec ai-infra-backend test -f /root/sync-seaweedfs 2>/dev/null; then
+        log_warn "  ⚠ sync-seaweedfs tool not found in backend container"
+        log_info "  → Rebuild backend to include the tool: ./build.sh rebuild backend"
+        log_info "  → Credentials will be synced via backend startup (seed.go)"
+        return 0
+    fi
+    
+    # 使用后端 CLI 工具加密并同步凭据
+    log_info "  → Executing sync-seaweedfs in backend container..."
+    
+    # 执行后端的 sync-seaweedfs 工具（它会自动读取容器的环境变量）
+    if docker exec ai-infra-backend /root/sync-seaweedfs 2>&1 | while read line; do
+        log_info "  [backend] $line"
+    done; then
+        log_info "  ✓ SeaweedFS credentials synced with encryption"
+    else
+        log_warn "  ⚠ Failed to sync SeaweedFS credentials via backend CLI"
+        log_info "  → Credentials will be synced when backend restarts (via seed.go)"
+    fi
+    
+    return 0
+}
+
 
 # 检查 PostgreSQL 数据库是否包含生产数据
 # Returns: 0 if has data, 1 if empty/not exists
@@ -6468,11 +9827,326 @@ pre_deployment_safety_check() {
     return 0
 }
 
+# ==============================================================================
+# Component Update Functions - 组件更新函数
+# ==============================================================================
+
+# Update a single component: build -> tag -> restart
+# Usage: update_component <component> [--force] [--no-restart]
+# Examples:
+#   update_component backend
+#   update_component frontend --force
+#   update_component nginx --no-restart
+update_component() {
+    local component="$1"
+    shift
+    # Inherit global FORCE_BUILD if already set (from global --force flag)
+    local force_build="${FORCE_BUILD:-false}"
+    local no_restart=false
+    local tag="${IMAGE_TAG:-latest}"
+    
+    # Parse options (can override global settings)
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f)
+                force_build=true
+                shift
+                ;;
+            --no-restart)
+                no_restart=true
+                shift
+                ;;
+            --tag=*)
+                tag="${1#--tag=}"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ -z "$component" ]]; then
+        log_error "Component name is required"
+        log_info "Usage: $0 update <component> [--force] [--no-restart] [--tag=VERSION]"
+        return 1
+    fi
+    
+    local component_dir="$SRC_DIR/$component"
+    if [[ ! -d "$component_dir" ]]; then
+        log_error "Component not found: $component"
+        log_info "Available components in $SRC_DIR:"
+        ls -1 "$SRC_DIR" | sed 's/^/  - /'
+        return 1
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🔄 Updating component: $component"
+    [[ "$force_build" == "true" ]] && log_info "   Mode: Force rebuild (--no-cache)"
+    [[ "$no_restart" == "true" ]] && log_info "   Mode: Build only (--no-restart)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local compose_cmd=$(detect_compose_command)
+    local image_name="ai-infra-$component:$tag"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        image_name="$PRIVATE_REGISTRY/$image_name"
+    fi
+    
+    # Step 1: Render template if exists
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [[ -f "$template_file" ]]; then
+        log_step "Step 1/4: Rendering template..."
+        if ! render_template "$template_file"; then
+            log_error "Failed to render template for $component"
+            return 1
+        fi
+        log_info "  ✓ Template rendered"
+    else
+        log_step "Step 1/4: No template to render (using Dockerfile directly)"
+    fi
+    
+    # Step 2: Build component
+    log_step "Step 2/4: Building $component..."
+    if [[ "$force_build" == "true" ]]; then
+        # Set environment variables that build_component uses to add --no-cache
+        # Do NOT pass --force to build_component as it's not a valid docker build flag
+        FORCE_BUILD=true
+        FORCE_REBUILD=true      # Skip cache check in need_rebuild()
+        SKIP_CACHE_CHECK=true   # Additional flag to skip cache check
+        log_info "  → Force rebuild enabled (--no-cache, skip cache check)"
+    fi
+    
+    if ! build_component "$component"; then
+        log_error "Failed to build $component"
+        return 1
+    fi
+    
+    # Step 3: Verify and tag image properly
+    log_step "Step 3/4: Verifying and tagging image..."
+    
+    # Find the latest built image for this component
+    # Priority: 1) Image with correct tag, 2) Architecture-specific tag, 3) Most recent image
+    local built_image_id=""
+    local base_image_name="ai-infra-$component"
+    
+    # Detect native architecture
+    local native_arch=$(_detect_docker_platform)
+    native_arch="${native_arch##*/}"  # Extract arch from linux/amd64 -> amd64
+    local arch_tag="${tag}-${native_arch}"
+    local arch_image_name="ai-infra-$component:$arch_tag"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        arch_image_name="$PRIVATE_REGISTRY/$arch_image_name"
+    fi
+    
+    # First check if the expected image exists (without arch suffix)
+    if docker image inspect "$image_name" >/dev/null 2>&1; then
+        built_image_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
+        log_info "  ✓ Found image with expected tag: $image_name (ID: $built_image_id)"
+    # Then check for architecture-specific tag (e.g., v0.3.8-amd64)
+    elif docker image inspect "$arch_image_name" >/dev/null 2>&1; then
+        built_image_id=$(docker image inspect "$arch_image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
+        log_info "  ✓ Found image with arch tag: $arch_image_name (ID: $built_image_id)"
+        # Tag it as the base image name (without arch suffix) for docker-compose
+        if docker tag "$arch_image_name" "$image_name"; then
+            log_info "  ✓ Tagged image: $arch_image_name -> $image_name"
+        else
+            log_error "  ✗ Failed to tag $arch_image_name as $image_name"
+            return 1
+        fi
+    else
+        # Look for the most recently created image matching the component name
+        # This handles cases where build produced an image but with wrong/no tag
+        # Use docker images with --filter to find recent images more reliably
+        built_image_id=$(docker images --format '{{.ID}}\t{{.Repository}}:{{.Tag}}' | \
+            grep -E "${base_image_name}:" | \
+            head -1 | \
+            cut -f1)
+        
+        if [[ -n "$built_image_id" ]]; then
+            log_info "  → Found recent image: $built_image_id, tagging as $image_name"
+            if docker tag "$built_image_id" "$image_name"; then
+                log_info "  ✓ Tagged image: $built_image_id -> $image_name"
+            else
+                log_error "  ✗ Failed to tag image $built_image_id as $image_name"
+                return 1
+            fi
+        else
+            # Last resort: check for dangling images created in last 5 minutes
+            built_image_id=$(docker images --filter "dangling=true" --format '{{.ID}}' | head -1)
+            
+            if [[ -n "$built_image_id" ]]; then
+                log_info "  → Found dangling image: $built_image_id, tagging as $image_name"
+                if docker tag "$built_image_id" "$image_name"; then
+                    log_info "  ✓ Tagged dangling image: $built_image_id -> $image_name"
+                else
+                    log_error "  ✗ Failed to tag dangling image"
+                    return 1
+                fi
+            else
+                log_error "  ✗ No built image found for $component"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Ensure architecture-specific tag also exists (for multi-arch consistency)
+    # Tag the base image with architecture suffix if not already done
+    if ! docker image inspect "$arch_image_name" >/dev/null 2>&1; then
+        if docker tag "$image_name" "$arch_image_name" 2>/dev/null; then
+            log_info "  ✓ Synced architecture tag: $arch_image_name"
+        fi
+    fi
+    
+    # Verify final image
+    local final_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
+    log_info "  ✓ Image ready: $image_name (ID: $final_id)"
+    
+    # Step 4 (Backend only): Sync SeaweedFS credentials BEFORE restart
+    # This ensures backend starts with correct credentials
+    if [[ "$component" == "backend" ]]; then
+        log_step "Step 4/5: Syncing SeaweedFS credentials (before restart)..."
+        sync_seaweedfs_credentials
+    fi
+    
+    # Step 5 (or 4 for non-backend): Restart component
+    local restart_step="4/4"
+    [[ "$component" == "backend" ]] && restart_step="5/5"
+    
+    if [[ "$no_restart" == "true" ]]; then
+        log_step "Step $restart_step: Skipping restart (--no-restart specified)"
+    else
+        log_step "Step $restart_step: Restarting $component..."
+        
+        # Get the service name in docker-compose (usually same as component name)
+        local service_name="$component"
+        
+        # Check if service is running
+        if $compose_cmd ps --services 2>/dev/null | grep -q "^${service_name}$"; then
+            # Stop the service
+            log_info "  → Stopping $service_name..."
+            $compose_cmd stop "$service_name" 2>/dev/null || true
+            
+            # Remove the container to ensure fresh start with new image
+            local container_name="ai-infra-$component"
+            docker rm -f "$container_name" 2>/dev/null || true
+            
+            # Start the service
+            log_info "  → Starting $service_name..."
+            if $compose_cmd up -d --no-build --pull never "$service_name" 2>/dev/null; then
+                log_info "  ✓ Service restarted: $service_name"
+            else
+                log_warn "  ⚠ Failed to start $service_name, trying alternative method..."
+                # Fallback: try starting without the specific service flag
+                $compose_cmd up -d --no-build --pull never 2>/dev/null || true
+            fi
+        else
+            log_info "  → Service $service_name not running, starting..."
+            if $compose_cmd up -d --no-build --pull never "$service_name" 2>/dev/null; then
+                log_info "  ✓ Service started: $service_name"
+            else
+                log_warn "  ⚠ Service might need manual start: docker compose up -d $service_name"
+            fi
+        fi
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "✅ Update completed: $component"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    return 0
+}
+
+# Update multiple components at once
+# Usage: update_components <component1> <component2> ... [--force] [--no-restart]
+# Examples:
+#   update_components backend frontend
+#   update_components backend frontend nginx --force
+update_components() {
+    local components=()
+    local extra_args=()
+    
+    # Parse arguments: separate components from options
+    for arg in "$@"; do
+        if [[ "$arg" == --* || "$arg" == -* ]]; then
+            extra_args+=("$arg")
+        else
+            components+=("$arg")
+        fi
+    done
+    
+    if [[ ${#components[@]} -eq 0 ]]; then
+        log_error "At least one component is required"
+        log_info "Usage: $0 update <component1> [component2] ... [--force] [--no-restart]"
+        log_info ""
+        log_info "Common components:"
+        log_info "  backend     - Go backend API service"
+        log_info "  frontend    - React frontend application"
+        log_info "  nginx       - Nginx reverse proxy"
+        log_info "  jupyterhub  - JupyterHub service"
+        log_info "  saltstack   - SaltStack master service"
+        log_info "  nightingale - Nightingale monitoring"
+        log_info ""
+        log_info "Tip: Use 'ls $SRC_DIR' to see all available components"
+        return 1
+    fi
+    
+    local total=${#components[@]}
+    local success=0
+    local failed=0
+    
+    log_info "╔══════════════════════════════════════════════════════════════╗"
+    log_info "║  🔄 Batch Update: $total component(s)                          "
+    log_info "║  Components: ${components[*]}"
+    log_info "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    for component in "${components[@]}"; do
+        if update_component "$component" "${extra_args[@]}"; then
+            success=$((success + 1))
+        else
+            failed=$((failed + 1))
+            log_error "Failed to update: $component"
+        fi
+        echo ""
+    done
+    
+    log_info "╔══════════════════════════════════════════════════════════════╗"
+    log_info "║  📊 Update Summary                                            "
+    log_info "║  Total: $total | ✅ Success: $success | ❌ Failed: $failed"
+    log_info "╚══════════════════════════════════════════════════════════════╝"
+    
+    [[ $failed -eq 0 ]]
+}
+
+# Quick update shortcuts for common components
+update_backend() {
+    update_component "backend" "$@"
+}
+
+update_frontend() {
+    update_component "frontend" "$@"
+}
+
+update_nginx() {
+    update_component "nginx" "$@"
+}
+
 start_all() {
     log_info "Starting all services (with HA profile for SaltStack multi-master)..."
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
+        exit 1
+    fi
+    
+    # 【环境清理】确保 Docker 环境状态一致（修复网络标签等问题）
+    log_info "=== Docker Environment Check ==="
+    ensure_clean_docker_state
+    
+    # 【架构检查】确保镜像与本机 CPU 架构匹配
+    log_info "=== Architecture Compatibility Check ==="
+    if ! check_images_architecture; then
+        log_error "Architecture check failed. Please rebuild images for your platform."
+        log_info "Run: ./build.sh build-all"
         exit 1
     fi
     
@@ -6868,6 +10542,9 @@ export_offline_images() {
     local failed_images=()
     
     # Helper function to export single image for specific platform
+    # This function expects images to be pre-pulled (use pull-all --platform=xxx first)
+    # Note: On Docker Desktop (Mac/Windows), docker inspect may return incorrect architecture
+    # for cross-platform pulled images. We trust that pull-all --platform=xxx did the right thing.
     _export_image_for_platform() {
         local image_name="$1"
         local platform="$2"
@@ -6887,37 +10564,53 @@ export_offline_images() {
                 echo "not_found"
                 return
             fi
-            # Export local image (assumes it's built for current platform)
+            # Verify architecture matches (only for local builds where we control the tag)
+            local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+            if [[ -n "$actual_arch" ]] && [[ "$actual_arch" != "$arch_name" ]]; then
+                echo "arch_mismatch:$actual_arch"
+                return
+            fi
+            # Export local image
             if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                 du -h "$output_file" | cut -f1
             else
                 echo "failed"
             fi
         else
-            # For remote images, pull specific platform and export
-            # First check if already pulled
-            local pull_needed=true
-            if docker image inspect "$image_name" >/dev/null 2>&1; then
-                # Check if the existing image matches the target platform
-                local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
-                if [[ "$existing_arch" == "$arch_name" ]] || [[ "$existing_arch" == "${arch_name/amd64/amd64}" ]]; then
-                    pull_needed=false
-                fi
-            fi
+            # For remote images: Docker Desktop with containerd image store has a known issue
+            # where "docker save" fails with "content digest not found" for multi-arch images.
+            # 
+            # Solution: Use "docker buildx build --output type=docker" to create a single-arch
+            # image that can be properly saved. This essentially re-packages the image layers
+            # into a format compatible with docker save.
+            # 
+            # We output with the original image name so docker load will create the correct tag.
             
-            # Pull with specific platform if needed
-            if $pull_needed; then
-                if ! docker pull --platform "$platform" "$image_name" >/dev/null 2>&1; then
-                    echo "pull_failed"
-                    return
+            # Use buildx to create a loadable single-arch image with original name
+            # The "FROM image" dockerfile trick forces buildx to resolve to the specific platform
+            if echo "FROM $image_name" | docker buildx build \
+                --platform="$platform" \
+                --output "type=docker,name=${image_name}" \
+                --quiet \
+                -f - . >/dev/null 2>&1; then
+                
+                # Now save the image (buildx should have replaced the multi-arch manifest with single-arch)
+                if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                    du -h "$output_file" | cut -f1
+                else
+                    echo "failed"
                 fi
-            fi
-            
-            # Export the pulled image
-            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
-                du -h "$output_file" | cut -f1
             else
-                echo "failed"
+                # Buildx failed, try direct pull+save as fallback (may work on native Docker)
+                if docker pull --platform="$platform" "$image_name" -q >/dev/null 2>&1; then
+                    if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                        du -h "$output_file" | cut -f1
+                    else
+                        echo "failed"
+                    fi
+                else
+                    echo "not_found"
+                fi
             fi
         fi
     }
@@ -6936,28 +10629,39 @@ export_offline_images() {
         # Try to export for each requested platform
         for platform in "${valid_platforms[@]}"; do
             local arch_name="${platform##*/}"
-            local arch_suffix=""
+            local arch_suffix="-${arch_name}"
             local image_name=""
+            local image_found=false
             
-            # For non-native arch, check for architecture-suffixed tag first
-            if [[ "$arch_name" != "$native_arch" ]]; then
-                arch_suffix="-${arch_name}"
-                image_name="ai-infra-${service}:${tag}${arch_suffix}"
-            else
-                # Native arch uses base tag
-                image_name="ai-infra-${service}:${tag}"
+            # Priority order for finding images:
+            # 1. Check architecture-suffixed tag first (cross-platform builds always use suffix)
+            # 2. Then check base tag (native builds)
+            local suffixed_image="ai-infra-${service}:${tag}${arch_suffix}"
+            local base_image="ai-infra-${service}:${tag}"
+            
+            # Try suffixed image first (preferred for clarity)
+            if docker image inspect "$suffixed_image" >/dev/null 2>&1; then
+                image_name="$suffixed_image"
+                image_found=true
+            elif docker image inspect "$base_image" >/dev/null 2>&1; then
+                # Verify base image has correct architecture
+                local base_arch=$(docker image inspect "$base_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$base_arch" == "$arch_name" ]]; then
+                    image_name="$base_image"
+                    image_found=true
+                fi
             fi
             
             local safe_name=$(echo "ai-infra-${service}_${tag}" | sed 's|:|_|g')
             local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
             
-            if docker image inspect "$image_name" >/dev/null 2>&1; then
+            if $image_found; then
                 # Verify the image architecture matches what we expect
                 local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
                 if [[ "$actual_arch" == "$arch_name" ]] || [[ "$actual_arch" == "amd64" && "$arch_name" == "amd64" ]] || [[ "$actual_arch" == "arm64" && "$arch_name" == "arm64" ]]; then
                     if docker save "$image_name" -o "$output_file"; then
                         local file_size=$(du -h "$output_file" | cut -f1)
-                        log_info "  ✓ Exported [${arch_name}]: $(basename "$output_file") ($file_size)"
+                        log_info "  ✓ [$arch_name] Exported: $(basename "$output_file") ($file_size)"
                         exported_count=$((exported_count + 1))
                     else
                         log_warn "  ✗ [$arch_name] Failed to export: $image_name"
@@ -6970,23 +10674,8 @@ export_offline_images() {
                     failed_count=$((failed_count + 1))
                 fi
             else
-                # Try fallback: for non-native, also check base tag (in case it was built without suffix)
-                if [[ -n "$arch_suffix" ]]; then
-                    local fallback_image="ai-infra-${service}:${tag}"
-                    if docker image inspect "$fallback_image" >/dev/null 2>&1; then
-                        local fallback_arch=$(docker image inspect "$fallback_image" --format '{{.Architecture}}' 2>/dev/null)
-                        if [[ "$fallback_arch" == "$arch_name" ]]; then
-                            if docker save "$fallback_image" -o "$output_file"; then
-                                local file_size=$(du -h "$output_file" | cut -f1)
-                                log_info "  ✓ Exported [${arch_name}] (from base tag): $(basename "$output_file") ($file_size)"
-                                exported_count=$((exported_count + 1))
-                                continue
-                            fi
-                        fi
-                    fi
-                fi
-                log_warn "  ! [$arch_name] Image not found: $image_name"
-                failed_images+=("${image_name}@${arch_name}")
+                log_warn "  ✗ [$arch_name] Image not found (tried: $suffixed_image, $base_image)"
+                failed_images+=("ai-infra-${service}:${tag}@${arch_name}")
                 failed_count=$((failed_count + 1))
             fi
         done
@@ -6995,6 +10684,7 @@ export_offline_images() {
     
     # Phase 2: Export dependency images (from deps.yaml mapping) - multi-arch
     log_info "=== Phase 2: Exporting dependency images (multi-arch) ==="
+    log_info "Note: Run './build.sh pull-all --platform=xxx' first to pull correct architecture"
     local dependencies=($(get_dependency_mappings))
     
     for mapping in "${dependencies[@]}"; do
@@ -7009,10 +10699,16 @@ export_offline_images() {
             
             case "$result" in
                 not_found)
-                    log_warn "  ! [$arch_name] Image not found, skipping"
+                    log_warn "  ! [$arch_name] Image not found (run: ./build.sh pull-all --platform=$arch_name)"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
                     ;;
-                pull_failed)
-                    log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                arch_mismatch:*)
+                    local actual_arch="${result#arch_mismatch:}"
+                    log_warn "  ! [$arch_name] Architecture mismatch: $actual_arch (expected $arch_name)"
+                    log_warn "    → Run: ./build.sh pull-all --platform=$arch_name"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
                     ;;
                 failed)
                     log_warn "  ✗ [$arch_name] Failed to export"
@@ -7031,6 +10727,7 @@ export_offline_images() {
     # Phase 3: Export common/third-party images - multi-arch
     if [[ "$include_common" == "true" ]]; then
         log_info "=== Phase 3: Exporting common/third-party images (multi-arch) ==="
+        log_info "Note: Run './build.sh pull-all --platform=xxx' first to pull correct architecture"
         
         for image in "${COMMON_IMAGES[@]}"; do
             log_info "→ Exporting: $image"
@@ -7041,10 +10738,16 @@ export_offline_images() {
                 
                 case "$result" in
                     not_found)
-                        log_warn "  ! [$arch_name] Image not found, skipping"
+                        log_warn "  ! [$arch_name] Image not found (run: ./build.sh pull-all --platform=$arch_name)"
+                        failed_images+=("${image}@${arch_name}")
+                        failed_count=$((failed_count + 1))
                         ;;
-                    pull_failed)
-                        log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                    arch_mismatch:*)
+                        local actual_arch="${result#arch_mismatch:}"
+                        log_warn "  ! [$arch_name] Architecture mismatch: $actual_arch (expected $arch_name)"
+                        log_warn "    → Run: ./build.sh pull-all --platform=$arch_name"
+                        failed_images+=("${image}@${arch_name}")
+                        failed_count=$((failed_count + 1))
                         ;;
                     failed)
                         log_warn "  ✗ [$arch_name] Failed to export"
@@ -7257,6 +10960,15 @@ IMPORT_SCRIPT_EOF
             log_warn "    - $img"
         done
         echo
+        
+        # Provide helpful hint
+        log_info "💡 To fix missing/wrong-arch images, run:"
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            log_info "   ./build.sh pull-all --platform=$arch_name   # Pull all $arch_name images"
+        done
+        log_info "   Then re-run: ./build.sh export-offline --platform=<arch>"
+        echo
     fi
     
     log_info "📁 Output files:"
@@ -7293,6 +11005,9 @@ print_help() {
     echo "  init-env --force    Force re-initialize all environment variables"
     echo "  gen-prod-env [file] Generate production .env with random strong passwords"
     echo "                      default output: .env.prod"
+    echo "  detect-domain       Detect public domain by DNS verification"
+    echo "                      Checks if candidate domains resolve to server's public IP"
+    echo "                      Auto-configures PUBLIC_HOST if verified"
     echo ""
     echo "SSL/HTTPS Commands (SSL enabled by default):"
     echo "  ssl-setup [domain]  Generate self-signed SSL certificates to src/nginx/ssl/"
@@ -7304,6 +11019,9 @@ print_help() {
     echo "                      Issue Let's Encrypt cert via Cloudflare DNS validation"
     echo "                      Credentials: ~/.secrets/cloudflare.ini or CLOUDFLARE_CREDENTIALS"
     echo "                      --wildcard: Include *.<domain> wildcard certificate"
+    echo "  ssl-import <path>   Import custom SSL certificates from specified path"
+    echo "                      Auto-detect certs in directory or specify files directly"
+    echo "                      Options: --key=<path> --ca=<path> --chain=<path> --force"
     echo "  ssl-info [domain]   Display SSL certificate information"
     echo "  ssl-check           Diagnose SSL/domain configuration for cloud deployments"
     echo "                      Detects domain mismatch, private IP issues, etc."
@@ -7342,7 +11060,42 @@ print_help() {
     echo "Service Commands:"
     echo "  start-all           Start all services (with SaltStack HA multi-master)"
     echo "  stop-all            Stop all services"
+    echo "  up [options] [services]   Start services with docker compose up"
+    echo "    Options:"
+    echo "      --profile <name>      Use docker compose profile (keycloak, argocd, full)"
+    echo "      -d, --detach          Run in background (default)"
+    echo "      --build               Build images before starting"
+    echo "      --force-recreate      Recreate containers"
+    echo "      --remove-orphans      Remove orphaned containers"
+    echo "    Examples:"
+    echo "      $0 up                          # Start all default services"
+    echo "      $0 up --profile full           # Start with full profile (Keycloak + ArgoCD)"
+    echo "      $0 up --profile keycloak       # Start with Keycloak SSO only"
+    echo "      $0 up nginx backend            # Start specific services"
+    echo "      $0 up --build --force-recreate # Build and force recreate"
+    echo "  down [options] [services] Stop services with docker compose down"
+    echo "    Options:"
+    echo "      --profile <name>      Use docker compose profile"
+    echo "      -v, --volumes         Remove volumes"
+    echo "      --rmi local|all       Remove images"
+    echo "      --remove-orphans      Remove orphaned containers"
+    echo "    Examples:"
+    echo "      $0 down                        # Stop all services"
+    echo "      $0 down --profile full         # Stop services with profile"
+    echo "      $0 down -v                     # Stop and remove volumes"
     echo "  tag-images          Tag private registry images as local (for intranet)"
+    echo ""
+    echo "Update Commands (Build + Tag + Restart):"
+    echo "  update <component> [options]       Update a single component"
+    echo "  update <c1> <c2> ... [options]     Update multiple components"
+    echo "    Options:"
+    echo "      --force, -f      Force rebuild without Docker cache"
+    echo "      --no-restart     Only build, do not restart the service"
+    echo "      --tag=VERSION    Specify image tag (default: \$IMAGE_TAG)"
+    echo "    Examples:"
+    echo "      $0 update backend                # Build and restart backend"
+    echo "      $0 update frontend --force       # Force rebuild frontend"
+    echo "      $0 update backend frontend       # Update multiple components"
     echo ""
     echo "Database Safety Commands:"
     echo "  db-check            Check if PostgreSQL has production data"
@@ -7387,6 +11140,23 @@ print_help() {
     echo "    Components: prometheus, node_exporter, alertmanager, categraf,"
     echo "                code_server (alias: vscode), saltstack, slurm, etc."
     echo ""
+    echo "Go Dependencies Update Commands:"
+    echo "  update-go-deps [project] [options]  Update Go module dependencies"
+    echo "    Projects:"
+    echo "      backend          Update backend Go dependencies"
+    echo "      nightingale      Update Nightingale Go dependencies"
+    echo "      all              Update all projects (default)"
+    echo "    Options:"
+    echo "      -h, --help       Show help"
+    echo "      --patch          Only update patch versions (default)"
+    echo "      --minor          Update minor and patch versions"
+    echo "      --tidy           Only run go mod tidy (no upgrades)"
+    echo "    Examples:"
+    echo "      $0 update-go-deps              # Update all with patch versions"
+    echo "      $0 update-go-deps backend      # Update backend only"
+    echo "      $0 update-go-deps --minor      # Update all with minor versions"
+    echo "      $0 update-go-deps --tidy       # Only tidy all projects"
+    echo ""
     echo "Offline Export Commands:"
     echo "  export-offline [dir] [tag] [include_common] [platforms]"
     echo "                          Export images to tar files (multi-arch support)"
@@ -7429,6 +11199,8 @@ print_help() {
     echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
     echo "  $0 ssl-cloudflare ai-infra-matrix.top          # Cloudflare DNS validation"
     echo "  $0 ssl-cloudflare ai-infra-matrix.top --wildcard  # Wildcard cert (*.<domain>)"
+    echo "  $0 ssl-import /path/to/certs/      # Import custom certs from directory"
+    echo "  $0 ssl-import /path/to/cert.crt --key=/path/to/cert.key  # Import specific files"
     echo "  $0 ssl-info                        # Show certificate details"
     echo "  $0 ssl-check                       # Diagnose SSL/domain config issues"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
@@ -7458,6 +11230,12 @@ print_help() {
     echo "  $0 build-history                   # Show recent build history"
     echo "  $0 clear-cache                     # Clear all build cache"
     echo "  $0 clear-cache backend             # Clear cache for specific service"
+    echo ""
+    echo "  # Quick update (build + tag + restart)"
+    echo "  $0 update backend                      # Update backend service"
+    echo "  $0 update frontend --force             # Force rebuild and restart"
+    echo "  $0 update backend frontend nginx       # Update multiple components"
+    echo "  $0 update backend --no-restart         # Build only, no restart"
     echo ""
     echo "  # Internet mode (Docker Hub)"
     echo "  $0 prefetch                        # Prefetch base images"
@@ -7501,32 +11279,69 @@ FORCE_REBUILD=false
 ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
-BUILD_PLATFORMS=""  # Empty means use native platform, can be: amd64, arm64, amd64,arm64
+# 默认只构建本地架构，简化构建流程
+# 如果需要构建其他架构，使用 --platform=amd64 或 --platform=amd64,arm64
+BUILD_PLATFORMS=""  # 空表示使用本地架构，稍后会自动检测
+CROSS_PLATFORM_BUILD=false  # 标记是否是跨平台构建
+NO_ARCH_TAG=true    # Default: remote tag won't include arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
 REMAINING_ARGS=()
+PARALLEL_JOBS=4     # 默认并行任务数
 
-for arg in "$@"; do
+# 使用 while 循环和 shift 来正确处理参数，避免 -p 平台和并行参数冲突
+args=("$@")
+i=0
+while [ $i -lt $# ]; do
+    arg="${args[$i]}"
     case "$arg" in
         --force|-f|--no-cache)
             FORCE_BUILD=true
             FORCE_RENDER=true
             FORCE_REBUILD=true
             ;;
-        --parallel|-p)
+        --parallel)
             ENABLE_PARALLEL=true
             ;;
-        --parallel=*|-p=*)
+        --parallel=*)
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#*=}"
-            ;;
-        -p[0-9]*)
-            ENABLE_PARALLEL=true
-            PARALLEL_JOBS="${arg#-p}"
+            # 验证并行任务数
+            if ! [[ "$PARALLEL_JOBS" =~ ^[0-9]+$ ]] || [ "$PARALLEL_JOBS" -lt 1 ]; then
+                log_error "Invalid parallel jobs: ${PARALLEL_JOBS}. Must be a positive integer."
+                exit 1
+            fi
             ;;
         --platform=*)
             BUILD_PLATFORMS="${arg#*=}"
             ;;
         --platform)
-            # Next arg should be the platform value, handled by shift logic below
+            # 处理 --platform amd64 这种格式
+            i=$((i+1))
+            if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
+                log_error "Platform specification required: --platform=amd64,arm64 or --platform amd64,arm64"
+                exit 1
+            fi
+            BUILD_PLATFORMS="${args[$i]}"
+            ;;
+        -p*)
+            # 处理 -p 参数的各种格式 (-p=xxx, -pxxx, -p xxx)
+            if [[ "$arg" == -p=* ]]; then
+                BUILD_PLATFORMS="${arg#*=}"
+            elif [[ "$arg" == -p?* ]]; then
+                # -p后面直接跟值，如 -pamd64
+                BUILD_PLATFORMS="${arg#-p}"
+            else
+                # -p 单独出现，下一个是平台值
+                i=$((i+1))
+                if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
+                    log_error "Platform specification required: -p=amd64,arm64, -p amd64,arm64 or -pamd64,arm64"
+                    exit 1
+                fi
+                BUILD_PLATFORMS="${args[$i]}"
+            fi
+            ;;
+        --arch-tag)
+            # For Harbor: add architecture suffix to remote tag (e.g., v0.3.8-amd64)
+            NO_ARCH_TAG=false
             ;;
         --ssl)
             ENABLE_SSL=true
@@ -7545,6 +11360,7 @@ for arg in "$@"; do
             REMAINING_ARGS+=("$arg")
             ;;
     esac
+    i=$((i+1))
 done
 
 # Show mode messages after parsing
@@ -7560,8 +11376,68 @@ fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
 fi
-if [[ -n "$BUILD_PLATFORMS" ]]; then
-    log_info "🏗️  Multi-platform build enabled: $BUILD_PLATFORMS"
+
+# ==============================================================================
+# 平台检测和跨平台构建处理
+# ==============================================================================
+# 检测本地系统架构
+_NATIVE_ARCH=$(_detect_docker_platform 2>/dev/null || echo "linux/arm64")
+_NATIVE_ARCH="${_NATIVE_ARCH##*/}"  # 提取架构名称 (arm64 或 amd64)
+
+# 如果未指定 BUILD_PLATFORMS，默认使用本地架构
+if [[ -z "$BUILD_PLATFORMS" ]]; then
+    BUILD_PLATFORMS="$_NATIVE_ARCH"
+    log_info "🏗️  Build platform (auto-detected): $BUILD_PLATFORMS"
+else
+    log_info "🏗️  Build platform (user specified): $BUILD_PLATFORMS"
+fi
+
+# 检测是否是跨平台构建（在 ARM 上构建 AMD64 或反之）
+_is_cross_platform_build() {
+    local target_platforms="$1"
+    local native_arch="$_NATIVE_ARCH"
+    
+    # 如果包含多个平台，肯定是跨平台
+    if [[ "$target_platforms" == *","* ]]; then
+        return 0  # true
+    fi
+    
+    # 标准化目标平台名称
+    local target_arch="$target_platforms"
+    case "$target_arch" in
+        x86_64) target_arch="amd64" ;;
+        aarch64) target_arch="arm64" ;;
+    esac
+    
+    # 如果目标架构与本地不同，是跨平台
+    if [[ "$target_arch" != "$native_arch" ]]; then
+        return 0  # true
+    fi
+    
+    return 1  # false
+}
+
+# 设置跨平台构建标志
+if _is_cross_platform_build "$BUILD_PLATFORMS"; then
+    CROSS_PLATFORM_BUILD=true
+    log_warn "🔄 Cross-platform build detected (native: $_NATIVE_ARCH, target: $BUILD_PLATFORMS)"
+    log_warn "   This requires QEMU emulation and may be slower"
+fi
+
+# Update DOCKER_HOST_PLATFORM for pull operations
+first_platform="${BUILD_PLATFORMS%%,*}"  # Get first platform (before comma)
+case "$first_platform" in
+    amd64|x86_64)
+        DOCKER_HOST_PLATFORM="linux/amd64"
+        ;;
+    arm64|aarch64)
+        DOCKER_HOST_PLATFORM="linux/arm64"
+        ;;
+esac
+log_info "🎯 Target platform for pull: $DOCKER_HOST_PLATFORM"
+
+if [[ "$NO_ARCH_TAG" == "true" ]]; then
+    log_info "☁️  Docker Hub mode: remote tags without arch suffix"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
@@ -7588,6 +11464,62 @@ case "$COMMAND" in
         echo
         log_info "Current environment configuration:"
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
+        ;;
+    detect-domain|detect-public-domain|auto-domain)
+        # 检测公网域名并自动配置 PUBLIC_HOST
+        log_info "🔍 Detecting public domain via DNS verification..."
+        echo
+        
+        # 获取服务器公网 IP
+        log_info "Step 1: Getting server's public IP..."
+        public_ip=$(get_public_ip)
+        if [[ -z "$public_ip" ]]; then
+            log_error "❌ Failed to detect public IP. Check internet connection."
+            exit 1
+        fi
+        log_info "✅ Server public IP: $public_ip"
+        echo
+        
+        # 检测域名
+        log_info "Step 2: Checking candidate domains..."
+        detected_domain=$(detect_public_domain)
+        
+        if [[ -n "$detected_domain" ]]; then
+            echo
+            log_info "🎉 Verified domain: $detected_domain"
+            log_info "   Resolves to: $public_ip"
+            echo
+            
+            # 询问是否更新 .env
+            if [[ -f "$ENV_FILE" ]]; then
+                current_public_host=$(grep "^PUBLIC_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+                if [[ "$current_public_host" != "$detected_domain" ]]; then
+                    log_info "Step 3: Updating PUBLIC_HOST in .env..."
+                    update_env_variable "PUBLIC_HOST" "$detected_domain"
+                    log_info "✅ PUBLIC_HOST updated: $detected_domain"
+                    echo
+                    log_info "📋 Next steps:"
+                    log_info "   1. Restart JupyterHub: docker compose up -d jupyterhub --force-recreate"
+                    log_info "   2. Verify redirects work correctly"
+                else
+                    log_info "✅ PUBLIC_HOST already set to: $detected_domain"
+                fi
+            else
+                log_warn "⚠️  .env file not found. Run 'init-env' first."
+                log_info "💡 Then manually set: PUBLIC_HOST=$detected_domain"
+            fi
+        else
+            log_warn "⚠️  No verified domain found."
+            log_info ""
+            log_info "To add your domain, edit build.sh and add it to candidate_domains array in detect_public_domain():"
+            log_info "   candidate_domains=("
+            log_info "       \"your-domain.com\""
+            log_info "       \"www.your-domain.com\""
+            log_info "   )"
+            log_info ""
+            log_info "Or manually set PUBLIC_HOST in .env:"
+            log_info "   PUBLIC_HOST=your-domain.com"
+        fi
         ;;
     init-safeline)
         # 初始化 SafeLine WAF 数据目录
@@ -7675,6 +11607,13 @@ case "$COMMAND" in
         done
         setup_cloudflare_certificates "$ssl_domain" "$ssl_wildcard" "$ssl_staging" "$FORCE_BUILD"
         ;;
+    ssl-import|ssl-custom|import-ssl)
+        # 导入用户自定义 SSL 证书
+        cert_path="${ARG2:-}"
+        # 收集所有额外参数
+        shift 2 2>/dev/null || true
+        import_custom_ssl_certificates "$cert_path" "$@"
+        ;;
     ssl-info)
         # 显示 SSL 证书信息
         show_ssl_info "${ARG2:-}"
@@ -7725,22 +11664,65 @@ case "$COMMAND" in
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
         
-        # Check if multi-platform build is requested
-        if [[ -n "$BUILD_PLATFORMS" ]]; then
-            # Multi-platform build mode
-            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
-            if [[ "$FORCE_BUILD" == "true" ]]; then
-                build_all_multiplatform "$BUILD_PLATFORMS" "true"
-            else
-                build_all_multiplatform "$BUILD_PLATFORMS"
+        # 确保 Docker 环境干净（修复网络标签问题等）
+        log_info "🔍 Ensuring clean Docker environment..."
+        ensure_clean_docker_state
+        
+        # 使用已解析的 BUILD_PLATFORMS（在参数解析阶段已设置）
+        _target_platforms="$BUILD_PLATFORMS"
+        
+        # ==================================================================
+        # 跨平台构建处理
+        # ==================================================================
+        if [[ "$CROSS_PLATFORM_BUILD" == "true" ]]; then
+            log_info ""
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "🔄 Cross-Platform Build Preparation"
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "Native architecture: $_NATIVE_ARCH"
+            log_info "Target platform(s): $_target_platforms"
+            log_info ""
+            
+            # 1. 停止当前运行的 AppHub 容器（可能是其他架构的）
+            if docker ps -q -f name=ai-infra-apphub 2>/dev/null | grep -q .; then
+                log_info "🛑 Stopping existing AppHub container..."
+                local compose_cmd=$(detect_compose_command)
+                $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+                log_info "   ✓ AppHub stopped"
             fi
+            
+            # 2. 确保 QEMU 和 buildx 已正确配置
+            log_info "🔧 Setting up QEMU and buildx for cross-platform builds..."
+            
+            # 检查并安装 QEMU（如果需要）
+            if ! docker run --rm --privileged multiarch/qemu-user-static --reset -p yes >/dev/null 2>&1; then
+                log_warn "   ⚠️  QEMU setup may have issues, trying alternative method..."
+                docker run --privileged --rm tonistiigi/binfmt --install all 2>/dev/null || true
+            else
+                log_info "   ✓ QEMU configured for multi-arch support"
+            fi
+            
+            # 3. 重新创建 buildx builder 以确保干净状态
+            log_info "🔧 Recreating buildx builder for cross-platform builds..."
+            docker buildx rm multiarch-builder 2>/dev/null || true
+            docker buildx create --name multiarch-builder \
+                --driver docker-container \
+                --driver-opt network=host \
+                --bootstrap 2>/dev/null || true
+            docker buildx use multiarch-builder 2>/dev/null || true
+            log_info "   ✓ Buildx builder ready"
+            
+            log_info ""
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info ""
+        fi
+        
+        # Always use multiplatform build function for consistent behavior
+        # This ensures buildx is used for all builds (better architecture handling)
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            build_all_multiplatform "$_target_platforms" "true"
         else
-            # Standard single-platform build
-            if [[ "$FORCE_BUILD" == "true" ]]; then
-                build_all "true"
-            else
-                build_all
-            fi
+            build_all_multiplatform "$_target_platforms"
         fi
         ;;
     build-multiarch|multiarch)
@@ -7781,11 +11763,180 @@ case "$COMMAND" in
     start-all)
         start_all
         ;;
+    up)
+        # Docker Compose up with optional profile support
+        # Usage: ./build.sh up [--profile <profile>] [service1] [service2] ...
+        # Examples:
+        #   ./build.sh up                    # Start all default services
+        #   ./build.sh up --profile full     # Start with 'full' profile
+        #   ./build.sh up --profile keycloak # Start with Keycloak SSO
+        #   ./build.sh up nginx backend      # Start specific services
+        
+        compose_args=()
+        profile_name=""
+        services_to_start=()
+        
+        # Parse arguments after 'up' command
+        _up_args=("${REMAINING_ARGS[@]:1}")
+        _i=0
+        while [[ $_i -lt ${#_up_args[@]} ]]; do
+            _arg="${_up_args[$_i]}"
+            case "$_arg" in
+                --profile)
+                    _i=$((_i + 1))
+                    profile_name="${_up_args[$_i]:-}"
+                    if [[ -n "$profile_name" ]]; then
+                        compose_args+=("--profile" "$profile_name")
+                    fi
+                    ;;
+                --profile=*)
+                    profile_name="${_arg#--profile=}"
+                    if [[ -n "$profile_name" ]]; then
+                        compose_args+=("--profile" "$profile_name")
+                    fi
+                    ;;
+                -d|--detach)
+                    compose_args+=("-d")
+                    ;;
+                --build)
+                    compose_args+=("--build")
+                    ;;
+                --force-recreate)
+                    compose_args+=("--force-recreate")
+                    ;;
+                --remove-orphans)
+                    compose_args+=("--remove-orphans")
+                    ;;
+                -*)
+                    # Pass through other docker-compose options
+                    compose_args+=("$_arg")
+                    ;;
+                *)
+                    # Service names
+                    services_to_start+=("$_arg")
+                    ;;
+            esac
+            _i=$((_i + 1))
+        done
+        
+        # Default to detached mode if not specified
+        if [[ ! " ${compose_args[*]} " =~ " -d " ]] && [[ ! " ${compose_args[*]} " =~ " --detach " ]]; then
+            compose_args+=("-d")
+        fi
+        
+        # Build docker-compose command
+        compose_cmd="docker compose"
+        if [[ ${#compose_args[@]} -gt 0 ]]; then
+            # Profile args come before 'up'
+            profile_args=()
+            other_args=()
+            for _a in "${compose_args[@]}"; do
+                if [[ "$_a" == "--profile" ]] || [[ -n "$_pending_profile" ]]; then
+                    if [[ "$_a" == "--profile" ]]; then
+                        _pending_profile="true"
+                        profile_args+=("$_a")
+                    else
+                        profile_args+=("$_a")
+                        _pending_profile=""
+                    fi
+                else
+                    other_args+=("$_a")
+                fi
+            done
+            
+            if [[ ${#profile_args[@]} -gt 0 ]]; then
+                compose_cmd="$compose_cmd ${profile_args[*]}"
+            fi
+            compose_cmd="$compose_cmd up"
+            if [[ ${#other_args[@]} -gt 0 ]]; then
+                compose_cmd="$compose_cmd ${other_args[*]}"
+            fi
+        else
+            compose_cmd="$compose_cmd up -d"
+        fi
+        
+        # Add services if specified
+        if [[ ${#services_to_start[@]} -gt 0 ]]; then
+            compose_cmd="$compose_cmd ${services_to_start[*]}"
+        fi
+        
+        log_info "🚀 Starting services..."
+        if [[ -n "$profile_name" ]]; then
+            log_info "  Profile: $profile_name"
+        fi
+        if [[ ${#services_to_start[@]} -gt 0 ]]; then
+            log_info "  Services: ${services_to_start[*]}"
+        fi
+        log_info "  Command: $compose_cmd"
+        
+        eval "$compose_cmd"
+        ;;
+    down)
+        # Docker Compose down with optional profile support
+        compose_args=()
+        profile_name=""
+        
+        # Parse arguments
+        _down_args=("${REMAINING_ARGS[@]:1}")
+        for _arg in "${_down_args[@]}"; do
+            case "$_arg" in
+                --profile=*)
+                    profile_name="${_arg#--profile=}"
+                    compose_args+=("--profile" "$profile_name")
+                    ;;
+                -v|--volumes)
+                    compose_args+=("-v")
+                    ;;
+                --rmi)
+                    compose_args+=("--rmi" "all")
+                    ;;
+                *)
+                    compose_args+=("$_arg")
+                    ;;
+            esac
+        done
+        
+        compose_cmd="docker compose"
+        if [[ -n "$profile_name" ]]; then
+            compose_cmd="$compose_cmd --profile $profile_name"
+        fi
+        compose_cmd="$compose_cmd down ${compose_args[*]}"
+        
+        log_info "🛑 Stopping services..."
+        log_info "  Command: $compose_cmd"
+        eval "$compose_cmd"
+        ;;
     tag-images)
         tag_private_images_as_local
         ;;
     stop-all)
         stop_all
+        ;;
+    update)
+        # Update component(s): build -> tag -> restart
+        # Usage: ./build.sh update <component1> [component2] ... [--force] [--no-restart]
+        shift_args=("${REMAINING_ARGS[@]:1}")  # Remove 'update' command itself
+        if [[ ${#shift_args[@]} -eq 0 ]]; then
+            log_error "Component name(s) required"
+            log_info ""
+            log_info "Usage: $0 update <component1> [component2] ... [options]"
+            log_info ""
+            log_info "Options:"
+            log_info "  --force, -f      Force rebuild without Docker cache"
+            log_info "  --no-restart     Only build, do not restart the service"
+            log_info "  --tag=VERSION    Specify image tag (default: \$IMAGE_TAG or 'latest')"
+            log_info ""
+            log_info "Examples:"
+            log_info "  $0 update backend                    # Build and restart backend"
+            log_info "  $0 update frontend --force           # Force rebuild frontend"
+            log_info "  $0 update backend frontend nginx     # Update multiple components"
+            log_info "  $0 update backend --no-restart       # Build only, no restart"
+            log_info ""
+            log_info "Available components:"
+            ls -1 "$SRC_DIR" 2>/dev/null | sed 's/^/  - /' || log_warn "Could not list $SRC_DIR"
+            exit 1
+        fi
+        update_components "${shift_args[@]}"
         ;;
     db-check)
         check_postgres_has_data "${ARG2:-ai_infra}"
@@ -7818,7 +11969,8 @@ case "$COMMAND" in
         ;;
     pull-all)
         # Smart mode: without registry -> Docker Hub, with registry -> private registry
-        pull_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
+        # Supports multi-architecture: ./build.sh pull-all <registry> <tag> --platform=amd64,arm64
+        pull_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
         ;;
     deps-pull)
         if [[ -z "$ARG2" ]]; then
@@ -7831,23 +11983,38 @@ case "$COMMAND" in
     push)
         if [[ -z "$ARG2" ]]; then
             log_error "Service name is required"
-            log_info "Usage: $0 push <service> <registry> [tag]"
+            log_info "Usage: $0 push <service> <registry> [tag] [--platform=amd64|arm64]"
             exit 1
         fi
         if [[ -z "$ARG3" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push <service> <registry> [tag]"
+            log_info "Usage: $0 push <service> <registry> [tag] [--platform=amd64|arm64]"
             exit 1
         fi
-        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3"
+        # Pass BUILD_PLATFORMS if specified via --platform flag
+        # Pass BUILD_PLATFORMS and arch_tag flag
+        # Default: no arch suffix. Use --arch-tag for Harbor mode
+        _arch_tag="false"
+        [[ "$NO_ARCH_TAG" == "false" ]] && _arch_tag="true"
+        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
     push-all)
         if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push-all <registry> [tag]"
+            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64] [--arch-tag]"
+            log_info ""
+            log_info "Examples:"
+            log_info "  $0 push-all docker.io/user v0.3.8                                           # Docker Hub: v0.3.8 (default)"
+            log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64                          # Single arch, no suffix"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                   # Harbor: v0.3.8-amd64, v0.3.8-arm64"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64 --arch-tag  # Harbor: v0.3.8-amd64"
             exit 1
         fi
-        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
+        # Default: no arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
+        _arch_tag="false"
+        [[ "$NO_ARCH_TAG" == "false" ]] && _arch_tag="true"
+        # Pass BUILD_PLATFORMS and arch_tag flag
+        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
     push-dep|push-dependencies)
         if [[ -z "$ARG2" ]]; then
@@ -7859,7 +12026,9 @@ case "$COMMAND" in
         ;;
     export-offline)
         # Export all images to tar files for offline deployment (multi-arch)
-        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}" "${ARG5:-amd64,arm64}"
+        # Priority: --platform= flag > ARG5 position parameter > default (amd64,arm64)
+        _export_platforms="${BUILD_PLATFORMS:-${ARG5:-amd64,arm64}}"
+        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}" "$_export_platforms"
         ;;
     download|download-deps)
         # Download third-party dependencies to third_party/
@@ -7881,6 +12050,16 @@ case "$COMMAND" in
         
         log_info "✅ Third-party dependencies downloaded to third_party/"
         log_info "💡 These files will be used during AppHub build for faster builds"
+        ;;
+    update-go-deps)
+        # Update Go module dependencies
+        log_info "🔄 Updating Go dependencies..."
+        
+        # 构建传递给更新函数的参数（排除命令本身）
+        _update_args=("${REMAINING_ARGS[@]:1}")
+        
+        # 使用内置的更新函数
+        update_go_dependencies "${_update_args[@]}"
         ;;
     help|--help|-h)
         print_help

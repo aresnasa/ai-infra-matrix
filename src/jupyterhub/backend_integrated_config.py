@@ -42,6 +42,10 @@ except Exception:  # 运行在非Hub环境时兜底
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# 减少 urllib3 和 docker 相关的 DEBUG 日志噪音
+logging.getLogger('urllib3').setLevel(logging.INFO)
+logging.getLogger('docker').setLevel(logging.INFO)
+
 print("🚀 JupyterHub后端集成配置加载中...")
 
 # 环境配置
@@ -524,7 +528,12 @@ c.JupyterHub.extra_handlers = [
 
 # 构建动态 CSP frame-ancestors 列表
 def build_csp_frame_ancestors():
-    """根据环境变量构建 CSP frame-ancestors 策略"""
+    """根据环境变量构建 CSP frame-ancestors 策略
+    
+    支持公有云环境：
+    - PUBLIC_HOST: 公网域名或 IP（如 ai-infra-matrix.top）
+    - EXTERNAL_HOST: 内网 IP（如 172.19.53.9）
+    """
     ancestors = ["'self'"]
     
     # 添加 HTTP 源
@@ -543,6 +552,19 @@ def build_csp_frame_ancestors():
             f"https://{EXTERNAL_HOST}:{HTTPS_PORT}" if ':' not in EXTERNAL_HOST else f"https://{EXTERNAL_HOST.split(':')[0]}:{HTTPS_PORT}",
         ]
         ancestors.extend(https_origins)
+    
+    # 关键：添加 PUBLIC_HOST（公网域名）以支持 iframe 嵌入
+    if PUBLIC_HOST:
+        public_host_clean = PUBLIC_HOST.split(':')[0]  # 移除端口号（如果有）
+        # 添加 HTTP 和 HTTPS 版本（使用标准端口，不带端口号）
+        ancestors.append(f"http://{public_host_clean}")
+        ancestors.append(f"https://{public_host_clean}")
+        # 也添加带非标准端口的版本
+        if EXTERNAL_PORT and EXTERNAL_PORT != '80':
+            ancestors.append(f"http://{public_host_clean}:{EXTERNAL_PORT}")
+        if HTTPS_PORT and HTTPS_PORT != '443':
+            ancestors.append(f"https://{public_host_clean}:{HTTPS_PORT}")
+        print(f"✅ PUBLIC_HOST '{PUBLIC_HOST}' 已添加到 CSP frame-ancestors")
     
     return " ".join(ancestors) + ";"
 
@@ -653,8 +675,6 @@ c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'd
 # SSL 代理模式下的 ConfigurableHTTPProxy 配置
 # 当 JupyterHub 在 SSL 终止代理（如 nginx）后面运行时，需要信任代理传递的协议
 if enable_tls or EXTERNAL_SCHEME == 'https':
-    # 允许代理将 HTTPS 请求转发为 HTTP
-    c.ConfigurableHTTPProxy.should_check_origin = False
     # 配置代理的 API 令牌
     c.ConfigurableHTTPProxy.api_url = 'http://127.0.0.1:8001'
     print("🔒 ConfigurableHTTPProxy: SSL 代理模式已配置")

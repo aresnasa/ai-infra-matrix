@@ -47,6 +47,11 @@ func main() {
 		log.Printf("Warning: Failed to migrate ai_assistant_configs: %v", err)
 	}
 
+	// 4. 迁移 ObjectStorageConfig 表的 access_key 和 secret_key
+	if err := migrateObjectStorageConfigs(db); err != nil {
+		log.Printf("Warning: Failed to migrate object_storage_configs: %v", err)
+	}
+
 	log.Println("Sensitive data encryption migration completed!")
 }
 
@@ -215,5 +220,63 @@ func migrateAIConfigs(db *gorm.DB) error {
 	}
 
 	log.Printf("Migrated %d ai_assistant_configs records", migratedCount)
+	return nil
+}
+
+// migrateObjectStorageConfigs 加密 object_storage_configs 表中的敏感数据
+func migrateObjectStorageConfigs(db *gorm.DB) error {
+	type ObjectStorageConfigRaw struct {
+		ID        uint
+		AccessKey string `gorm:"column:access_key"`
+		SecretKey string `gorm:"column:secret_key"`
+	}
+
+	var configs []ObjectStorageConfigRaw
+	if err := db.Table("object_storage_configs").Select("id, access_key, secret_key").Find(&configs).Error; err != nil {
+		return fmt.Errorf("failed to query object_storage_configs: %w", err)
+	}
+
+	encryptionService := utils.GetEncryptionService()
+	if encryptionService == nil {
+		return fmt.Errorf("encryption service not initialized")
+	}
+
+	migratedCount := 0
+	for _, cfg := range configs {
+		needUpdate := false
+		updates := make(map[string]interface{})
+
+		// 检查并加密 access_key
+		if cfg.AccessKey != "" && !encryptionService.IsEncrypted(cfg.AccessKey) {
+			encrypted, err := encryptionService.Encrypt(cfg.AccessKey)
+			if err != nil {
+				log.Printf("Warning: Failed to encrypt access_key for config %d: %v", cfg.ID, err)
+				continue
+			}
+			updates["access_key"] = encrypted
+			needUpdate = true
+		}
+
+		// 检查并加密 secret_key
+		if cfg.SecretKey != "" && !encryptionService.IsEncrypted(cfg.SecretKey) {
+			encrypted, err := encryptionService.Encrypt(cfg.SecretKey)
+			if err != nil {
+				log.Printf("Warning: Failed to encrypt secret_key for config %d: %v", cfg.ID, err)
+				continue
+			}
+			updates["secret_key"] = encrypted
+			needUpdate = true
+		}
+
+		if needUpdate {
+			if err := db.Table("object_storage_configs").Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
+				log.Printf("Warning: Failed to update config %d: %v", cfg.ID, err)
+				continue
+			}
+			migratedCount++
+		}
+	}
+
+	log.Printf("Migrated %d object_storage_configs records", migratedCount)
 	return nil
 }

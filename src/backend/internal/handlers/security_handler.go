@@ -14,6 +14,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
 	"gorm.io/gorm"
@@ -21,13 +22,17 @@ import (
 
 // SecurityHandler 安全管理处理器
 type SecurityHandler struct {
-	db *gorm.DB
+	db                     *gorm.DB
+	loginProtectionService *services.LoginProtectionService
+	geoIPService           *services.GeoIPService
 }
 
 // NewSecurityHandler 创建安全管理处理器
 func NewSecurityHandler() *SecurityHandler {
 	return &SecurityHandler{
-		db: database.DB,
+		db:                     database.DB,
+		loginProtectionService: services.NewLoginProtectionService(),
+		geoIPService:           services.NewGeoIPService(),
 	}
 }
 
@@ -43,6 +48,7 @@ func (h *SecurityHandler) AutoMigrate() error {
 		&models.UserOAuthBinding{},
 		&models.SecurityAuditLog{},
 		&models.SecurityConfig{},
+		&models.IPLoginStats{},
 	)
 }
 
@@ -1207,4 +1213,666 @@ func (h *SecurityHandler) AdminDisable2FA(c *gin.Context) {
 		"success": true,
 		"message": fmt.Sprintf("已为用户 %s 禁用2FA", targetUser.Username),
 	})
+}
+
+// === 登录保护管理 ===
+
+// GetLockedAccounts 获取被锁定的账号列表
+// @Summary 获取锁定账号列表
+// @Description 获取所有当前被锁定的用户账号
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/locked-accounts [get]
+func (h *SecurityHandler) GetLockedAccounts(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	accounts, total, err := h.loginProtectionService.GetLockedAccounts(page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    accounts,
+		"total":   total,
+		"page":    page,
+		"size":    pageSize,
+	})
+}
+
+// UnlockAccount 解锁账号
+// @Summary 解锁用户账号
+// @Description 手动解锁被锁定的用户账号
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param username path string true "用户名"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/accounts/{username}/unlock [post]
+func (h *SecurityHandler) UnlockAccount(c *gin.Context) {
+	username := c.Param("username")
+	if username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "用户名不能为空"})
+		return
+	}
+
+	operatorID, _ := c.Get("user_id")
+	var opID uint
+	if id, ok := operatorID.(uint); ok {
+		opID = id
+	}
+
+	if err := h.loginProtectionService.UnlockAccount(username, opID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	h.logSecurityAudit(c, "account_unlock", "user", username, "success", map[string]interface{}{
+		"username":    username,
+		"operator_id": opID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("账号 %s 已解锁", username),
+	})
+}
+
+// GetBlockedIPsFromProtection 获取登录保护封禁的IP列表
+// @Summary 获取登录保护封禁IP列表
+// @Description 获取因登录失败次数过多被自动封禁的IP
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/blocked-ips [get]
+func (h *SecurityHandler) GetBlockedIPsFromProtection(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	ips, total, err := h.loginProtectionService.GetBlockedIPs(page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    ips,
+		"total":   total,
+		"page":    page,
+		"size":    pageSize,
+	})
+}
+
+// BlockIPManually 手动封禁IP
+// @Summary 手动封禁IP
+// @Description 手动将IP添加到封禁列表
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param request body object true "封禁请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/block-ip [post]
+func (h *SecurityHandler) BlockIPManually(c *gin.Context) {
+	var req struct {
+		IP              string `json:"ip" binding:"required"`
+		Reason          string `json:"reason"`
+		DurationMinutes int    `json:"duration_minutes"` // 0表示永久
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的请求参数"})
+		return
+	}
+
+	if !isValidIP(req.IP) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的IP地址格式"})
+		return
+	}
+
+	operatorID, _ := c.Get("user_id")
+	var opID uint
+	if id, ok := operatorID.(uint); ok {
+		opID = id
+	}
+
+	if err := h.loginProtectionService.BlockIP(req.IP, req.Reason, req.DurationMinutes, opID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	h.logSecurityAudit(c, "ip_block", "ip", req.IP, "success", map[string]interface{}{
+		"ip":               req.IP,
+		"reason":           req.Reason,
+		"duration_minutes": req.DurationMinutes,
+		"operator_id":      opID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("IP %s 已被封禁", req.IP),
+	})
+}
+
+// UnblockIP 解除IP封禁
+// @Summary 解除IP封禁
+// @Description 手动解除IP的封禁状态
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param ip path string true "IP地址"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/ips/{ip}/unblock [post]
+func (h *SecurityHandler) UnblockIP(c *gin.Context) {
+	ip := c.Param("ip")
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "IP地址不能为空"})
+		return
+	}
+
+	operatorID, _ := c.Get("user_id")
+	var opID uint
+	if id, ok := operatorID.(uint); ok {
+		opID = id
+	}
+
+	if err := h.loginProtectionService.UnblockIP(ip, opID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	h.logSecurityAudit(c, "ip_unblock", "ip", ip, "success", map[string]interface{}{
+		"ip":          ip,
+		"operator_id": opID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("IP %s 已解除封禁", ip),
+	})
+}
+
+// GetLoginAttempts 获取登录尝试记录
+// @Summary 获取登录尝试记录
+// @Description 查询登录尝试记录，支持按IP、用户名、时间范围过滤
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Param ip query string false "IP地址"
+// @Param username query string false "用户名"
+// @Param success query bool false "是否成功"
+// @Param start_time query string false "开始时间 (RFC3339)"
+// @Param end_time query string false "结束时间 (RFC3339)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/login-attempts [get]
+func (h *SecurityHandler) GetLoginAttempts(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	filter := services.LoginAttemptFilter{
+		IP:       c.Query("ip"),
+		Username: c.Query("username"),
+	}
+
+	if successStr := c.Query("success"); successStr != "" {
+		success := successStr == "true"
+		filter.Success = &success
+	}
+
+	if startTime := c.Query("start_time"); startTime != "" {
+		if t, err := time.Parse(time.RFC3339, startTime); err == nil {
+			filter.StartTime = t
+		}
+	}
+
+	if endTime := c.Query("end_time"); endTime != "" {
+		if t, err := time.Parse(time.RFC3339, endTime); err == nil {
+			filter.EndTime = t
+		}
+	}
+
+	attempts, total, err := h.loginProtectionService.GetLoginAttempts(filter, page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    attempts,
+		"total":   total,
+		"page":    page,
+		"size":    pageSize,
+	})
+}
+
+// GetIPLoginStats 获取IP登录统计
+// @Summary 获取IP登录统计
+// @Description 获取IP登录统计信息，包括风险评分
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(20)
+// @Param ip query string false "IP地址（支持模糊搜索）"
+// @Param only_blocked query bool false "仅显示被封禁的" default(false)
+// @Param min_risk_score query int false "最低风险分数" default(0)
+// @Param order_by_risk query bool false "按风险分数排序" default(false)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/ip-stats [get]
+func (h *SecurityHandler) GetIPLoginStats(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	filter := services.IPStatsFilter{
+		IP:          c.Query("ip"),
+		OnlyBlocked: c.Query("only_blocked") == "true",
+		OrderByRisk: c.Query("order_by_risk") == "true",
+	}
+
+	if minRisk := c.Query("min_risk_score"); minRisk != "" {
+		if score, err := strconv.Atoi(minRisk); err == nil {
+			filter.MinRiskScore = score
+		}
+	}
+
+	stats, total, err := h.loginProtectionService.GetIPLoginStatsList(filter, page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+		"total":   total,
+		"page":    page,
+		"size":    pageSize,
+	})
+}
+
+// GetLoginStatsSummary 获取登录统计摘要
+// @Summary 获取登录统计摘要
+// @Description 获取指定时间段内的登录统计摘要
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param hours query int false "统计时间范围（小时）" default(24)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/login-stats/summary [get]
+func (h *SecurityHandler) GetLoginStatsSummary(c *gin.Context) {
+	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "24"))
+	if hours < 1 {
+		hours = 24
+	}
+	if hours > 720 { // 最多30天
+		hours = 720
+	}
+
+	summary, err := h.loginProtectionService.GetLoginStatsSummary(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    summary,
+		"hours":   hours,
+	})
+}
+
+// GetIPStatsDetail 获取单个IP的详细统计
+// @Summary 获取IP详细统计
+// @Description 获取指定IP的详细登录统计信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param ip path string true "IP地址"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/ip-stats/{ip} [get]
+func (h *SecurityHandler) GetIPStatsDetail(c *gin.Context) {
+	ip := c.Param("ip")
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "IP地址不能为空"})
+		return
+	}
+
+	stats, err := h.loginProtectionService.GetIPStats(ip)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if stats == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "未找到该IP的统计信息"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// CleanupLoginRecords 清理过期登录记录
+// @Summary 清理过期登录记录
+// @Description 清理指定天数之前的登录尝试记录
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param retention_days query int false "保留天数" default(90)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/v1/security/login-records/cleanup [post]
+func (h *SecurityHandler) CleanupLoginRecords(c *gin.Context) {
+	retentionDays, _ := strconv.Atoi(c.DefaultQuery("retention_days", "90"))
+	if retentionDays < 7 {
+		retentionDays = 7 // 最少保留7天
+	}
+
+	if err := h.loginProtectionService.CleanupExpiredRecords(retentionDays); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	operatorID, _ := c.Get("user_id")
+	h.logSecurityAudit(c, "login_records_cleanup", "system", "", "success", map[string]interface{}{
+		"retention_days": retentionDays,
+		"operator_id":    operatorID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("已清理 %d 天前的登录记录", retentionDays),
+	})
+}
+
+// GetClientInfo 获取客户端信息（包括真实IP和GeoIP信息）
+// @Summary 获取客户端信息
+// @Description 获取当前请求的客户端IP、地理位置、User-Agent等信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/client-info [get]
+func (h *SecurityHandler) GetClientInfo(c *gin.Context) {
+	// 获取真实客户端IP
+	clientIP := h.getRealClientIP(c)
+
+	// 获取所有相关的IP头信息（用于调试）
+	xForwardedFor := c.GetHeader("X-Forwarded-For")
+	xRealIP := c.GetHeader("X-Real-IP")
+	cfConnectingIP := c.GetHeader("CF-Connecting-IP") // Cloudflare
+	trueClientIP := c.GetHeader("True-Client-IP")     // Akamai/Cloudflare
+
+	// 获取 User-Agent
+	userAgent := c.GetHeader("User-Agent")
+
+	// 获取 Referer
+	referer := c.GetHeader("Referer")
+
+	// 获取 Accept-Language
+	acceptLanguage := c.GetHeader("Accept-Language")
+
+	// 获取请求协议
+	scheme := "http"
+	if c.GetHeader("X-Forwarded-Proto") == "https" || c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	// 获取 GeoIP 信息
+	var geoInfo *services.GeoIPInfo
+	var geoErr error
+	if clientIP != "" && clientIP != "unknown" {
+		geoInfo, geoErr = h.geoIPService.Lookup(clientIP)
+	}
+
+	// 构建响应
+	response := gin.H{
+		"success": true,
+		"data": gin.H{
+			"ip": gin.H{
+				"address":          clientIP,
+				"x_forwarded_for":  xForwardedFor,
+				"x_real_ip":        xRealIP,
+				"cf_connecting_ip": cfConnectingIP,
+				"true_client_ip":   trueClientIP,
+				"remote_addr":      c.Request.RemoteAddr,
+			},
+			"user_agent":      userAgent,
+			"referer":         referer,
+			"accept_language": acceptLanguage,
+			"scheme":          scheme,
+			"host":            c.Request.Host,
+			"request_time":    time.Now().Format(time.RFC3339),
+		},
+	}
+
+	// 添加 GeoIP 信息
+	if geoInfo != nil {
+		response["data"].(gin.H)["geo"] = gin.H{
+			"country":       geoInfo.Country,
+			"country_code":  geoInfo.CountryCode,
+			"region":        geoInfo.Region,
+			"city":          geoInfo.City,
+			"isp":           geoInfo.ISP,
+			"org":           geoInfo.Org,
+			"asn":           geoInfo.ASN,
+			"timezone":      geoInfo.Timezone,
+			"latitude":      geoInfo.Latitude,
+			"longitude":     geoInfo.Longitude,
+			"is_proxy":      geoInfo.IsProxy,
+			"is_vpn":        geoInfo.IsVPN,
+			"is_tor":        geoInfo.IsTor,
+			"is_datacenter": geoInfo.IsDatacenter,
+			"risk_level":    geoInfo.RiskLevel,
+			"source":        geoInfo.Source,
+		}
+	} else if geoErr != nil {
+		response["data"].(gin.H)["geo"] = gin.H{
+			"error": geoErr.Error(),
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// LookupIPGeoInfo 查询指定IP的GeoIP信息
+// @Summary 查询IP地理位置
+// @Description 查询指定IP地址的地理位置信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param ip path string true "IP地址"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/{ip} [get]
+func (h *SecurityHandler) LookupIPGeoInfo(c *gin.Context) {
+	ip := c.Param("ip")
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "IP地址不能为空"})
+		return
+	}
+
+	// 验证IP格式
+	if net.ParseIP(ip) == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的IP地址格式"})
+		return
+	}
+
+	geoInfo, err := h.geoIPService.Lookup(ip)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    geoInfo,
+	})
+}
+
+// BatchLookupIPGeoInfo 批量查询IP地理位置
+// @Summary 批量查询IP地理位置
+// @Description 批量查询多个IP地址的地理位置信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param request body object true "IP地址列表"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/batch [post]
+func (h *SecurityHandler) BatchLookupIPGeoInfo(c *gin.Context) {
+	var req struct {
+		IPs []string `json:"ips" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的请求参数"})
+		return
+	}
+
+	if len(req.IPs) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "一次最多查询100个IP"})
+		return
+	}
+
+	results := h.geoIPService.BatchLookup(req.IPs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    results,
+		"count":   len(results),
+	})
+}
+
+// GetGeoIPCacheStats 获取GeoIP缓存统计
+// @Summary 获取GeoIP缓存统计
+// @Description 获取GeoIP服务的缓存统计信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/stats [get]
+func (h *SecurityHandler) GetGeoIPCacheStats(c *gin.Context) {
+	stats := h.geoIPService.GetCacheStats()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// getRealClientIP 获取真实客户端IP
+func (h *SecurityHandler) getRealClientIP(c *gin.Context) string {
+	// 优先级: CF-Connecting-IP > True-Client-IP > X-Real-IP > X-Forwarded-For > RemoteAddr
+
+	// Cloudflare
+	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+
+	// Akamai/Cloudflare Enterprise
+	if ip := c.GetHeader("True-Client-IP"); ip != "" {
+		return ip
+	}
+
+	// Nginx real_ip 模块设置
+	if ip := c.GetHeader("X-Real-IP"); ip != "" {
+		return ip
+	}
+
+	// X-Forwarded-For 取第一个非内网IP
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		for _, ip := range ips {
+			ip = strings.TrimSpace(ip)
+			if ip != "" && !h.isPrivateIP(ip) {
+				return ip
+			}
+		}
+		// 如果都是内网IP，返回第一个
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+
+	// 使用 Gin 的 ClientIP (已经配置了 TrustedProxies)
+	clientIP := c.ClientIP()
+	if clientIP != "" {
+		return clientIP
+	}
+
+	// 最后使用 RemoteAddr
+	remoteAddr := c.Request.RemoteAddr
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+
+	return remoteAddr
+}
+
+// isPrivateIP 检查是否为内网IP
+func (h *SecurityHandler) isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"100.64.0.0/10",
+		"169.254.0.0/16",
+	}
+
+	for _, r := range privateRanges {
+		_, network, err := net.ParseCIDR(r)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
 }

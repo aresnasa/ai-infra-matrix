@@ -81,6 +81,11 @@ func main() {
 		log.Fatal("Failed to create Nightingale database:", err)
 	}
 
+	// 创建Keycloak数据库与用户
+	if err := createKeycloakDatabase(cfg); err != nil {
+		log.Fatal("Failed to create Keycloak database:", err)
+	}
+
 	// 初始化RBAC系统
 	if err := initializeRBAC(); err != nil {
 		log.Fatal("Failed to initialize RBAC:", err)
@@ -2283,5 +2288,104 @@ func initializeNightingalePrometheusDatasource(db *gorm.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// createKeycloakDatabase creates Keycloak database and user using GORM
+func createKeycloakDatabase(cfg *config.Config) error {
+	log.Println("=== Creating Keycloak Database ===")
+
+	// Read Keycloak DB settings from env
+	keycloakDBName := getEnvCompat("KEYCLOAK_DB_NAME", "keycloak")
+	keycloakDBUser := getEnvCompat("KEYCLOAK_DB_USER", "keycloak")
+	keycloakDBPassword := getEnvCompat("KEYCLOAK_DB_PASSWORD", "keycloak-db-password")
+
+	log.Printf("Keycloak DB settings - DB: %s, User: %s", keycloakDBName, keycloakDBUser)
+
+	// Connect to system DB (postgres)
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Check if Keycloak user exists
+	var userExists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = ?)", keycloakDBUser).Scan(&userExists).Error; err != nil {
+		return fmt.Errorf("failed to check Keycloak user existence: %w", err)
+	}
+
+	if !userExists {
+		log.Printf("Creating Keycloak user: %s", keycloakDBUser)
+		// Create user with quoted identifier and literal to prevent SQL injection
+		createUserSQL := fmt.Sprintf("CREATE USER %s WITH PASSWORD %s",
+			quoteIdentifier(keycloakDBUser),
+			quoteLiteral(keycloakDBPassword))
+		if err := systemDB.Exec(createUserSQL).Error; err != nil {
+			return fmt.Errorf("failed to create Keycloak user: %w", err)
+		}
+		log.Printf("✓ Keycloak user '%s' created successfully", keycloakDBUser)
+	} else {
+		log.Printf("✓ Keycloak user '%s' already exists", keycloakDBUser)
+		// Update password to ensure it matches config
+		alterUserSQL := fmt.Sprintf("ALTER USER %s WITH PASSWORD %s",
+			quoteIdentifier(keycloakDBUser),
+			quoteLiteral(keycloakDBPassword))
+		if err := systemDB.Exec(alterUserSQL).Error; err != nil {
+			log.Printf("Warning: Failed to update Keycloak user password: %v", err)
+		} else {
+			log.Printf("✓ Keycloak user password updated")
+		}
+	}
+
+	// Check if Keycloak DB exists
+	var dbExists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", keycloakDBName).Scan(&dbExists).Error; err != nil {
+		return fmt.Errorf("failed to check Keycloak DB existence: %w", err)
+	}
+
+	if !dbExists {
+		log.Printf("Creating Keycloak database: %s", keycloakDBName)
+		// Create database with quoted identifier
+		createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s OWNER %s",
+			quoteIdentifier(keycloakDBName),
+			quoteIdentifier(keycloakDBUser))
+		if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
+			return fmt.Errorf("failed to create Keycloak database: %w", err)
+		}
+		log.Printf("✓ Keycloak database '%s' created successfully", keycloakDBName)
+	} else {
+		log.Printf("✓ Keycloak database '%s' already exists", keycloakDBName)
+		// Ensure ownership is correct
+		alterOwnerSQL := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s",
+			quoteIdentifier(keycloakDBName),
+			quoteIdentifier(keycloakDBUser))
+		if err := systemDB.Exec(alterOwnerSQL).Error; err != nil {
+			log.Printf("Warning: Failed to update database owner: %v", err)
+		}
+	}
+
+	// Grant all privileges on the database to the user
+	grantSQL := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s",
+		quoteIdentifier(keycloakDBName),
+		quoteIdentifier(keycloakDBUser))
+	if err := systemDB.Exec(grantSQL).Error; err != nil {
+		log.Printf("Warning: Failed to grant privileges: %v", err)
+	} else {
+		log.Printf("✓ Privileges granted on database '%s' to user '%s'", keycloakDBName, keycloakDBUser)
+	}
+
+	log.Println("=== Keycloak Database Setup Complete ===")
 	return nil
 }

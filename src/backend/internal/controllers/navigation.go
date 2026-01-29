@@ -34,6 +34,12 @@ type NavigationConfig struct {
 }
 
 // DefaultNavigationItems 默认导航项
+// 角色说明:
+// - data-developer: 数据开发团队，可访问 JupyterHub、SLURM、项目管理等
+// - sre: SRE运维团队，可访问所有基础设施管理功能
+// - audit: 审计团队，可访问 Kafka UI 和审计相关功能
+// - user: 普通用户
+// - admin/super-admin: 管理员
 var DefaultNavigationItems = []NavigationItem{
 	{
 		ID:      "projects",
@@ -42,7 +48,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "ProjectOutlined",
 		Visible: true,
 		Order:   0,
-		Roles:   []string{"user", "admin", "super-admin"},
+		Roles:   []string{"data-developer", "sre", "audit", "user", "admin", "super-admin"},
 	},
 	{
 		ID:      "monitoring",
@@ -51,7 +57,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "DashboardOutlined",
 		Visible: true,
 		Order:   1,
-		Roles:   []string{"admin", "super-admin"},
+		Roles:   []string{"sre", "admin", "super-admin"},
 	},
 	{
 		ID:      "gitea",
@@ -60,7 +66,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "CodeOutlined",
 		Visible: true,
 		Order:   2,
-		Roles:   []string{"user", "admin", "super-admin"},
+		Roles:   []string{"sre", "user", "admin", "super-admin"},
 	},
 	{
 		ID:      "kubernetes",
@@ -69,7 +75,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "CloudServerOutlined",
 		Visible: true,
 		Order:   3,
-		Roles:   []string{"admin", "super-admin"},
+		Roles:   []string{"sre", "admin", "super-admin"},
 	},
 	{
 		ID:      "ansible",
@@ -78,7 +84,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "FileTextOutlined",
 		Visible: true,
 		Order:   4,
-		Roles:   []string{"admin", "super-admin"},
+		Roles:   []string{"sre", "admin", "super-admin"},
 	},
 	{
 		ID:      "jupyterhub",
@@ -87,7 +93,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "ExperimentTwoTone",
 		Visible: true,
 		Order:   5,
-		Roles:   []string{"user", "admin", "super-admin"},
+		Roles:   []string{"data-developer", "sre", "user", "admin", "super-admin"},
 	},
 	{
 		ID:      "slurm",
@@ -96,7 +102,16 @@ var DefaultNavigationItems = []NavigationItem{
 		Icon:    "ClusterOutlined",
 		Visible: true,
 		Order:   6,
-		Roles:   []string{"admin", "super-admin"},
+		Roles:   []string{"data-developer", "sre", "admin", "super-admin"},
+	},
+	{
+		ID:      "object-storage",
+		Key:     "/object-storage",
+		Label:   "对象存储",
+		Icon:    "DatabaseOutlined",
+		Visible: true,
+		Order:   7,
+		Roles:   []string{"data-developer", "sre", "admin", "super-admin"},
 	},
 	{
 		ID:      "saltstack",
@@ -104,8 +119,17 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "SaltStack",
 		Icon:    "ControlOutlined",
 		Visible: true,
-		Order:   7,
-		Roles:   []string{"admin", "super-admin"},
+		Order:   8,
+		Roles:   []string{"sre", "admin", "super-admin"},
+	},
+	{
+		ID:      "kafka-ui",
+		Key:     "/kafka-ui",
+		Label:   "Kafka UI",
+		Icon:    "ApiOutlined",
+		Visible: true,
+		Order:   9,
+		Roles:   []string{"audit", "admin", "super-admin"},
 	},
 }
 

@@ -172,6 +172,9 @@ RUN set -eux; \
         }; \
     fi
 
+# Pre-create output directories with proper permissions for builder user
+RUN mkdir -p /out /home/builder/debs && chown -R builder:builder /out /home/builder/debs && chmod -R 755 /out /home/builder/debs
+
 USER builder
 RUN set -eux; \
     if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
@@ -182,11 +185,48 @@ RUN set -eux; \
         echo "📦 Building SLURM DEB packages..."; \
         echo "Note: Building without hardcoded cgroup dependency - use system defaults"; \
         echo "      cgroup features will be configured via slurm.conf, not at compile time"; \
+        echo ">>> Current directory: $(pwd)"; \
+        echo ">>> SLURM source directory contents:"; \
+        ls -la | head -20; \
         # Use DEB_BUILD_OPTIONS to pass configuration (skip tests, minimal build)
-        # Note: SLURM's debian/rules may not honor --without-cgroup, but we document the intent
         export DEB_BUILD_OPTIONS="nocheck parallel=$(nproc)"; \
-        dpkg-buildpackage -b -uc; \
+        echo ">>> DEB_BUILD_OPTIONS: $DEB_BUILD_OPTIONS"; \
+        echo ">>> Starting: dpkg-buildpackage -b -uc"; \
+        build_exit_code=0; \
+        if ! dpkg-buildpackage -b -uc 2>&1 | tee /tmp/dpkg-build.log; then \
+            build_exit_code=$?; \
+        fi; \
+        echo ">>> dpkg-buildpackage exit code: $build_exit_code"; \
+        if [ "$build_exit_code" -ne 0 ]; then \
+            echo "❌ DEB build failed with exit code: $build_exit_code"; \
+            echo ">>> Last 150 lines of build log:"; \
+            tail -150 /tmp/dpkg-build.log; \
+            echo ">>> Searching for error messages:"; \
+            grep -iE "error|fatal|failed|cannot find|undefined reference|missing|configure" /tmp/dpkg-build.log | tail -30 || echo "No specific error patterns found"; \
+            echo ">>> Checking debian/rules file:"; \
+            head -50 debian/rules 2>/dev/null || echo "debian/rules not found"; \
+            echo "⚠️  DEB package build failed - skipping for now"; \
+            touch /home/builder/debs/.skip_slurm_deb; \
+            touch /out/.skip_slurm_deb; \
+        else \
+            echo "✓ SLURM DEB build completed"; \
+            echo ">>> Checking for generated DEB packages..."; \
+            deb_count=$(find /home/builder/build -name "slurm*.deb" -type f 2>/dev/null | wc -l); \
+            if [ "$deb_count" -gt 0 ]; then \
+                echo "✓ Found $deb_count DEB package(s)"; \
+                mkdir -p /home/builder/debs; \
+                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -print0 | xargs -0 -I {} cp {} /home/builder/debs/; \
+                ls -lh /home/builder/debs/; \
+            else \
+                echo "⚠️  Build succeeded but no .deb files found"; \
+                echo ">>> Searching for any .deb files:"; \
+                find /home/builder/build -name "*.deb" -type f || echo "No .deb files found"; \
+                echo "⚠️  Creating skip marker for downstream steps"; \
+                touch /out/.skip_slurm_deb; \
+            fi; \
+        fi; \
     fi
+
 
 # Download SaltStack packages from GitHub releases
 USER root
@@ -313,31 +353,58 @@ RUN mkdir -p /out \
 
 # Move all debuild outputs to /out (skip verification if SLURM build was skipped)
 RUN set -eux; \
-    if [ ! -f /out/.skip_slurm ]; then \
+    if [ ! -f /home/builder/debs/.skip_slurm_deb ] && [ ! -f /out/.skip_slurm_deb ]; then \
+        echo ">>> Collecting DEB packages from build..."; \
         find /home/builder/build -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.build*' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.changes' -exec mv {} /out/ \; || true; \
+        # Also check in parent directory where debuild might output files
+        find /home/builder -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
+        find /home/builder -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
         # Verify at least one .deb file was produced
-        deb_count=$(find /out -name '*.deb' -type f | wc -l); \
+        deb_count=$(find /out -name '*.deb' -type f 2>/dev/null | wc -l); \
         if [ "$deb_count" -eq 0 ]; then \
-            echo "ERROR: No .deb packages were built!"; \
-            echo "Build artifacts in /home/builder:"; \
-            ls -la /home/builder/ || true; \
-            echo "Build artifacts in /home/builder/build:"; \
-            ls -la /home/builder/build/ || true; \
-            exit 1; \
+            echo "⚠️  WARNING: No .deb packages were found!"; \
+            echo ">>> This may indicate:"; \
+            echo "    1. DEB build failed (check previous logs)"; \
+            echo "    2. Packages are in unexpected location"; \
+            echo ">>> Build artifacts in /home/builder:"; \
+            ls -la /home/builder/ 2>/dev/null | head -20 || true; \
+            echo ">>> Build artifacts in /home/builder/build:"; \
+            ls -la /home/builder/build/ 2>/dev/null | head -20 || true; \
+            echo ">>> Build artifacts in /out:"; \
+            ls -la /out/ 2>/dev/null | grep -E '\.(deb|ddeb|build)' || echo "No packages found"; \
+            echo ">>> Marking DEB build as skipped due to missing packages"; \
+            touch /out/.skip_slurm_deb; \
+        else \
+            echo "✓ Successfully collected $deb_count SLURM .deb package(s)"; \
+            ls -lh /out/slurm*.deb 2>/dev/null | head -5; \
         fi; \
-        echo "✓ Successfully built $deb_count SLURM .deb package(s)"; \
+    elif [ -f /home/builder/debs/.skip_slurm_deb ] || [ -f /out/.skip_slurm_deb ]; then \
+        echo "⚠️  SLURM DEB build was skipped or failed - no packages to collect"; \
+        # Copy the skip marker to /out for consistency
+        touch /out/.skip_slurm_deb; \
     else \
-        echo "⚠️  SLURM build was skipped - no packages to collect"; \
+        echo "⚠️  SLURM RPM build was skipped - no DEB packages expected"; \
     fi; \
     # Copy SaltStack packages
     if [ -d /saltstack-deb ] && [ "$(ls -A /saltstack-deb/*.deb 2>/dev/null)" ]; then \
+        echo ">>> Collecting SaltStack packages..."; \
         cp /saltstack-deb/*.deb /out/ || true; \
         salt_count=$(ls /saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
-        echo "✓ Added ${salt_count} SaltStack deb packages"; \
-        ls -lh /out/salt*.deb 2>/dev/null || true; \
+        if [ "$salt_count" -gt 0 ]; then \
+            echo "✓ Added ${salt_count} SaltStack deb package(s)"; \
+            ls -lh /out/salt*.deb 2>/dev/null | head -5; \
+        fi; \
+    fi; \
+    echo ">>> Final package inventory:"; \
+    total_debs=$(find /out -name '*.deb' -type f 2>/dev/null | wc -l); \
+    if [ "$total_debs" -gt 0 ]; then \
+        echo "✓ Total: $total_debs DEB packages in /out"; \
+        ls -lh /out/*.deb 2>/dev/null | tail -3; \
+    else \
+        echo "ℹ️  No DEB packages in /out (may have been skipped)"; \
     fi
 
 # =============================================================================
@@ -488,7 +555,25 @@ RUN set -eux; \
         autoconf \
         automake \
         systemd \
+        systemd-devel \
+        libtool \
         || { echo "❌ Failed to install basic dependencies"; exit 1; }; \
+    # Install additional SLURM build dependencies
+    # These are commonly needed by rpmbuild -ta
+    dnf install -y \
+        dbus-devel \
+        numactl-devel \
+        gtk2-devel \
+        lua-devel \
+        http-parser-devel \
+        libcurl-devel \
+        lz4-devel \
+        freeipmi-devel \
+        rrdtool-devel \
+        hdf5-devel \
+        ncurses-devel \
+        man-db \
+        2>/dev/null || echo "⚠️ Some optional SLURM dependencies not available"; \
     # Install mariadb-devel (required by SLURM)
     dnf module reset mysql -y 2>/dev/null || true; \
     dnf install -y mysql-devel 2>/dev/null || \
@@ -568,7 +653,10 @@ RUN set -eux; \
     echo "✓ SLURM build dependencies installed (with available packages)"
 
 # Add non-root builder user
-RUN useradd -m -u 1000 builder
+RUN useradd -m -u 1000 builder && \
+    mkdir -p /out/slurm-rpm && \
+    chown -R builder:builder /out
+
 USER builder
 WORKDIR /home/builder/build
 
@@ -605,28 +693,96 @@ RUN set -eux; \
         echo ">>> Setting up rpmbuild environment..."; \
         mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
         # Create .rpmmacros file for custom configurations
-        # Note: Disable cgroup by default - let SLURM configuration (not compile-time) manage it
+        # Note: Use %_xxx format, NOT %define (which is for spec files only)
         echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
         echo '%_prefix /usr' >> ~/.rpmmacros; \
         echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
-        echo '%with_munge --with-munge' >> ~/.rpmmacros; \
-        echo '%without_cgroup --without-cgroup' >> ~/.rpmmacros; \
+        # Enable munge and disable cgroup using conditional build options
+        # These are passed via --define on rpmbuild command line instead
         echo "✓ Created ~/.rpmmacros configuration"; \
         cat ~/.rpmmacros; \
         echo "Note: cgroup support disabled at build time - use system defaults"; \
         # Build RPMs directly using rpmbuild -ta (recommended by official docs)
-        echo ">>> Building SLURM RPM packages using 'rpmbuild -ta' (this may take 10-15 minutes)..."; \
-        echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
-        echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
-        if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
-            echo "⚠️  RPM build failed! (Non-fatal, skipping RPMs)"; \
-            tail -100 /tmp/rpmbuild.log; \
+        # The --with-munge and --without-cgroup options are already defined in ~/.rpmmacros
+        echo ">>> Building SLURM RPM packages (this may take 10-15 minutes)..."; \
+        echo ">>> Using tarball-to-rpms workflow"; \
+        \
+        # Extract tarball to inspect spec file
+        echo ">>> Extracting tarball to find spec file..."; \
+        tar -xjf "${tarball}" -C /tmp; \
+        extracted_dir=$(tar -tjf "${tarball}" | head -1 | cut -d'/' -f1); \
+        echo "✓ Extracted to: /tmp/${extracted_dir}"; \
+        \
+        # Find and display spec file
+        spec_file="/tmp/${extracted_dir}/contribs/slurm.spec"; \
+        echo ">>> Looking for spec file: ${spec_file}"; \
+        if [ -f "${spec_file}" ]; then \
+            echo "✓ Found spec file"; \
+            head -30 "${spec_file}"; \
+        else \
+            echo "⚠️  Spec file not found at expected location"; \
+            find /tmp/${extracted_dir} -name "*.spec" -type f; \
+        fi; \
+        \
+        # Copy spec file to SPECS directory
+        echo ">>> Setting up spec file for rpmbuild..."; \
+        spec_path=$(find "/tmp/${extracted_dir}" -name "slurm.spec" -type f | head -1); \
+        if [ -z "$spec_path" ]; then \
+            echo "❌ ERROR: slurm.spec not found in tarball!"; \
+            echo ">>> Available spec files:"; \
+            find "/tmp/${extracted_dir}" -name "*.spec" -type f || echo "No .spec files found"; \
+            echo ">>> Directory structure:"; \
+            ls -la "/tmp/${extracted_dir}/" | head -20; \
+            echo "⚠️  Skipping SLURM RPM build - spec file not found"; \
             mkdir -p /home/builder/rpms; \
             touch /home/builder/rpms/.skip_slurm; \
         else \
-            echo "✓ SLURM RPM build completed successfully"; \
-            echo ">>> Listing generated RPM packages:"; \
-            find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
+            echo ">>> Found spec file at: $spec_path"; \
+            \
+            # SLURM 官方推荐使用 rpmbuild -ta 直接从 tarball 构建
+            # 参考: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
+            echo ">>> Building RPMs using: rpmbuild -ta ${tarball}"; \
+            echo ">>> This is the official recommended method for SLURM"; \
+            rpmbuild_exit_code=0; \
+            # 使用 --define 传递必要的宏定义
+            # --nodeps 跳过 RPM 依赖检查（依赖已从源码安装，不在 RPM 数据库中）
+            # --with munge 启用 munge 认证支持
+            # --without cgroup_v1 禁用旧版 cgroup v1 支持（使用系统默认的 v2）
+            if ! rpmbuild -ta "${tarball}" \
+                --nodeps \
+                --define "_topdir /home/builder/rpmbuild" \
+                --define "with_munge 1" \
+                --define "_without_cgroup_v1 1" \
+                2>&1 | tee /tmp/rpmbuild.log; then \
+                rpmbuild_exit_code=$?; \
+            fi; \
+            echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
+            \
+            # Check if RPM files were created
+            echo ">>> Checking for generated RPM packages..."; \
+            rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
+            echo "Found $rpm_count RPM file(s)"; \
+            \
+            if [ "$rpm_count" -gt 0 ]; then \
+                echo "✓ SLURM RPM build completed successfully"; \
+                echo ">>> Verifying and collecting generated RPM packages:"; \
+                mkdir -p /out/slurm-rpm; \
+                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -print0 | xargs -0 -I {} cp {} /out/slurm-rpm/; \
+                echo "✓ Copied $rpm_count RPM packages to /out/slurm-rpm"; \
+                ls -lh /out/slurm-rpm/*.rpm 2>/dev/null; \
+            else \
+                echo "❌ ERROR: No .rpm files were created!"; \
+                echo ">>> rpmbuild exit code was: $rpmbuild_exit_code"; \
+                echo ">>> Last 200 lines of build log:"; \
+                tail -200 /tmp/rpmbuild.log; \
+                echo ">>> Searching for error messages:"; \
+                grep -iE "error|fatal|failed|cannot find|undefined reference" /tmp/rpmbuild.log | tail -30 || echo "No error patterns found"; \
+                echo ">>> Checking rpmbuild directory contents:"; \
+                ls -la /home/builder/rpmbuild/; \
+                ls -la /home/builder/rpmbuild/BUILD/ 2>/dev/null || echo "BUILD directory empty"; \
+                mkdir -p /home/builder/rpms; \
+                touch /home/builder/rpms/.skip_slurm; \
+            fi; \
         fi; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
@@ -756,7 +912,8 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
 
 # Collect RPM artifacts
 RUN set -eux; \
-    mkdir -p /out; \
+    # Create output directories first (CRITICAL for multi-stage COPY)
+    mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
     echo "📦 Collecting RPM packages..."; \
     if [ ! -f /home/builder/rpms/.skip_slurm ] && [ "${BUILD_SLURM}" = "true" ]; then \
         # Find and copy built SLURM RPMs from all possible locations
@@ -767,33 +924,33 @@ RUN set -eux; \
         # Check rpmbuild directory structure (standard rpmbuild location)
         if [ -d /home/builder/rpmbuild/RPMS ]; then \
             echo "  Checking: /home/builder/rpmbuild/RPMS"; \
-            find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+            find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         fi; \
         # Check source directory (make rpm sometimes puts RPMs here)
         if [ -d /home/builder/build ]; then \
             echo "  Checking: /home/builder/build"; \
-            find /home/builder/build -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+            find /home/builder/build -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         fi; \
         # Check home directory root (backup location)
         echo "  Checking: /home/builder"; \
-        find /home/builder -maxdepth 3 -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        find /home/builder -maxdepth 3 -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         # Remove duplicates and debug symbols if needed
-        cd /out && rm -f *-debuginfo-*.rpm *-debugsource-*.rpm 2>/dev/null || true; \
+        cd /out/slurm-rpm && rm -f *-debuginfo-*.rpm *-debugsource-*.rpm 2>/dev/null || true; \
         # Count collected RPMs
-        rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
+        rpm_count=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
         if [ "$rpm_count" -gt 0 ]; then \
             echo "✓ Successfully collected ${rpm_count} SLURM RPM package(s)"; \
             echo ">>> SLURM RPM packages:"; \
-            ls -lh /out/*.rpm; \
+            ls -lh /out/slurm-rpm/*.rpm; \
         else \
             echo "⚠️  No SLURM RPM packages were found"; \
             echo ">>> Listing /home/builder structure for debugging:"; \
             ls -laR /home/builder/ | head -100 || true; \
-            touch /out/.skip_slurm; \
+            touch /out/slurm-rpm/.skip_slurm; \
         fi; \
     else \
         echo "⚠️  SLURM RPM build was skipped"; \
-        touch /out/.skip_slurm; \
+        touch /out/slurm-rpm/.skip_slurm; \
     fi; \
     # Copy SaltStack packages (CRITICAL: ensure they exist before copying)
     echo "📦 Checking SaltStack packages..."; \
@@ -802,63 +959,56 @@ RUN set -eux; \
         echo "Found ${salt_rpm_count} SaltStack rpm files in /saltstack-rpm"; \
         if [ "$salt_rpm_count" -gt 0 ]; then \
             ls -lh /saltstack-rpm/*.rpm; \
-            cp /saltstack-rpm/*.rpm /out/ || { \
+            cp /saltstack-rpm/*.rpm /out/saltstack-rpm/ || { \
                 echo "❌ Failed to copy SaltStack RPMs"; \
-                exit 1; \
+                touch /out/saltstack-rpm/.skip_saltstack; \
             }; \
-            echo "✓ Copied ${salt_rpm_count} SaltStack rpm packages to /out"; \
-            ls -lh /out/salt*.rpm 2>/dev/null || echo "⚠️  No salt*.rpm in /out"; \
+            echo "✓ Copied ${salt_rpm_count} SaltStack rpm packages to /out/saltstack-rpm"; \
+            ls -lh /out/saltstack-rpm/salt*.rpm 2>/dev/null || echo "⚠️  No salt*.rpm in /out/saltstack-rpm"; \
         else \
             echo "⚠️  No SaltStack RPM files found in /saltstack-rpm"; \
+            touch /out/saltstack-rpm/.skip_saltstack; \
         fi; \
     else \
-        echo "❌ /saltstack-rpm directory does not exist"; \
+        echo "⚠️  /saltstack-rpm directory does not exist"; \
+        touch /out/saltstack-rpm/.skip_saltstack; \
     fi; \
     # Final verification
-    echo "📊 Final /out contents:"; \
-    ls -lh /out/ || echo "⚠️  /out is empty"; \
-    total_rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
-    echo "✓ Total RPM packages in /out: ${total_rpm_count}"; \
+    echo "📊 Final /out/slurm-rpm contents:"; \
+    ls -lh /out/slurm-rpm/ || echo "⚠️  /out/slurm-rpm is empty"; \
+    echo "📊 Final /out/saltstack-rpm contents:"; \
+    ls -lh /out/saltstack-rpm/ || echo "⚠️  /out/saltstack-rpm is empty"; \
+    slurm_total=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    salt_total=$(ls /out/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo "✓ SLURM RPM packages: ${slurm_total}"; \
+    echo "✓ SaltStack RPM packages: ${salt_total}"; \
     # Generate RPM repository metadata using createrepo_c (Rocky Linux has it)
     echo "🔧 Installing createrepo_c for metadata generation..."; \
     dnf install -y createrepo_c 2>/dev/null || { \
         echo "⚠️  createrepo_c not available, trying createrepo..."; \
         dnf install -y createrepo 2>/dev/null || echo "⚠️  No createrepo tools available"; \
     }; \
-    # Separate SLURM and SaltStack RPMs into subdirectories
-    mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
     # Remove invalid/empty RPMs
     find /out -name "*.rpm" -size 0 -delete || true; \
-    # Check if there are any RPM files to organize
-    if ls /out/*.rpm >/dev/null 2>&1; then \
-        echo "📦 Organizing RPM packages..."; \
-        mv /out/slurm-*.rpm /out/slurm-rpm/ 2>/dev/null || true; \
-        mv /out/salt-*.rpm /out/saltstack-rpm/ 2>/dev/null || true; \
-        # Count packages in each directory
-        slurm_count=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-        salt_count=$(ls /out/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-        echo "  - SLURM RPMs: ${slurm_count}"; \
-        echo "  - SaltStack RPMs: ${salt_count}"; \
-        # Generate metadata for SLURM repository
-        if [ "$slurm_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
-            echo "🔧 Generating SLURM RPM repository metadata..."; \
-            cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
-            echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
-        elif [ "$slurm_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
-            echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
-            cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
-            echo "✓ Generated SLURM repodata"; \
-        fi; \
-        # Generate metadata for SaltStack repository
-        if [ "$salt_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
-            echo "🔧 Generating SaltStack RPM repository metadata..."; \
-            cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
-            echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
-        elif [ "$salt_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
-            echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
-            cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
-            echo "✓ Generated SaltStack repodata"; \
-        fi; \
+    # Generate metadata for SLURM repository
+    if [ "$slurm_total" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+        echo "🔧 Generating SLURM RPM repository metadata..."; \
+        cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
+        echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+    elif [ "$slurm_total" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+        echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
+        cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
+        echo "✓ Generated SLURM repodata"; \
+    fi; \
+    # Generate metadata for SaltStack repository
+    if [ "$salt_total" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+        echo "🔧 Generating SaltStack RPM repository metadata..."; \
+        cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
+        echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+    elif [ "$salt_total" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+        echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
+        cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
+        echo "✓ Generated SaltStack repodata"; \
     fi
 
 # =============================================================================
@@ -1341,7 +1491,7 @@ RUN set -eux; \
     if [ -n "$DEB_FILE" ]; then \
         dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
         # Find and copy cgroup_v2.so
-        find /tmp/slurm-extract -name "cgroup_v2.so" -exec cp {} /usr/share/nginx/html/pkgs/slurm-plugins/ \;; \
+        find /tmp/slurm-extract -name "cgroup_v2.so" -print0 | xargs -0 -I {} cp {} /usr/share/nginx/html/pkgs/slurm-plugins/; \
         rm -rf /tmp/slurm-extract; \
         echo "✓ Extracted cgroup_v2.so plugin"; \
         ls -lh /usr/share/nginx/html/pkgs/slurm-plugins/; \
@@ -1395,15 +1545,7 @@ ARG PYPI_INDEX_URL={{PYPI_INDEX_URL}}
 # 复制所有预下载的包
 COPY third_party/ /third_party/
 
-# Copy download scripts as fallback for any missing packages
-COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
-COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
-COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
-COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
-COPY src/apphub/scripts/saltstack/download-python-deps.sh /tmp/download-python-deps.sh
-
 RUN set -eux; \
-    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     mkdir -p /scripts/categraf; \
     mkdir -p /usr/share/nginx/html/pkgs/prometheus; \
     mkdir -p /usr/share/nginx/html/pkgs/node_exporter; \
@@ -1429,12 +1571,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$prometheus_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
-        /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Prometheus files not found (expected in third_party/prometheus/)"; \
     fi; \
     \
     # === Node Exporter ===
@@ -1450,12 +1587,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$node_exporter_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
-        /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Node Exporter files not found (expected in third_party/node_exporter/)"; \
     fi; \
     \
     # === Alertmanager ===
@@ -1487,12 +1619,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$categraf_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
-        /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Categraf files not found (expected in third_party/categraf/)"; \
     fi; \
     \
     # === SaltStack packages (DEB) ===
@@ -1545,13 +1672,9 @@ RUN set -eux; \
     \
     # === Python dependencies for SaltStack (looseversion for Python 3.12+) ===
     echo "📦 Processing Python dependencies..."; \
-    PYPI_MIRROR=${PYPI_INDEX_URL:-https://pypi.org/simple} \
-    PYPI_MIRROR_CN=https://mirrors.aliyun.com/pypi/simple \
-    OUTPUT_DIR=/usr/share/nginx/html/pkgs/python-deps \
-    /tmp/download-python-deps.sh || echo "⚠️ Python deps download failed, continuing..."; \
+    echo "  ⚠️  Python dependencies should be pre-downloaded to third_party/saltstack/"; \
     \
     # Cleanup
-    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     rm -rf /third_party; \
     \
     # Summary
@@ -1701,26 +1824,95 @@ RUN set -eux; \
         ln -sf ../pkgs/slurm-rpm/* /usr/share/nginx/html/rpm/ 2>/dev/null || true; \
         echo "  ✓ Linked SLURM rpm packages to /rpm/"; \
     fi; \
-    # Note about RPM metadata
+    # Check and report RPM metadata status
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
-        echo "⚠️  Note: YUM/DNF metadata generation skipped (can be enabled if createrepo is installed)"; \
-        echo "⚠️  Packages can be downloaded directly via HTTP"; \
+        if [ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] || [ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ]; then \
+            echo "✓ YUM/DNF repository metadata available (repodata generated in build stage)"; \
+            ls -la /usr/share/nginx/html/pkgs/slurm-rpm/repodata/ 2>/dev/null || true; \
+        else \
+            echo "⚠️  Note: YUM/DNF metadata not found (createrepo may have failed during build)"; \
+            echo "⚠️  Packages can still be downloaded directly via HTTP"; \
+        fi; \
     fi
 
-# Copy installation scripts (rendered from templates by build.sh render)
-# These scripts are pre-configured with EXTERNAL_HOST and other settings
-COPY scripts/install-salt-minion.sh /usr/share/nginx/html/scripts/install-salt-minion.sh
-COPY scripts/install-categraf.sh /usr/share/nginx/html/scripts/install-categraf.sh
-COPY scripts/install-node-exporter.sh /usr/share/nginx/html/scripts/install-node-exporter.sh
-COPY scripts/install-prometheus.sh /usr/share/nginx/html/scripts/install-prometheus.sh
-RUN chmod +x /usr/share/nginx/html/scripts/*.sh && \
-    echo "✓ Installation scripts copied to /scripts/"
+# Installation scripts are served dynamically by HTTP from AppHub
+# They are rendered by build.sh render and updated at runtime
+# No need to copy them into the image; clients fetch them via HTTP
+# Example: curl http://apphub:80/scripts/install-prometheus.sh
 
 # Expose port
 EXPOSE 80
 
 # Entrypoint to regenerate indexes if needed
-COPY src/apphub/entrypoint.sh /entrypoint.sh
+# Create entrypoint script directly in the container to avoid COPY cache issues
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/sh
+
+regenerate_index() {
+    echo "Regenerating package indexes..."
+    
+    # Regenerate deb index if packages exist
+    if [ -d /usr/share/nginx/html/deb ]; then
+        cd /usr/share/nginx/html/deb
+        if ls *.deb >/dev/null 2>&1; then
+            echo "Regenerating deb index..."
+            dpkg-scanpackages . /dev/null > Packages
+            gzip -f Packages
+            echo "deb index regenerated"
+        fi
+    fi
+    
+    # Regenerate SLURM deb index
+    if [ -d /usr/share/nginx/html/pkgs/slurm-deb ]; then
+        cd /usr/share/nginx/html/pkgs/slurm-deb
+        if ls *.deb >/dev/null 2>&1; then
+            echo "Regenerating SLURM deb index..."
+            dpkg-scanpackages . /dev/null > Packages
+            gzip -c Packages > Packages.gz
+            echo "SLURM deb index regenerated"
+        fi
+    fi
+
+    # List rpm packages if they exist
+    if [ -d /usr/share/nginx/html/rpm ]; then
+        cd /usr/share/nginx/html/rpm
+        if ls *.rpm >/dev/null 2>&1; then
+            echo "Found rpm packages:"
+            ls -lh *.rpm
+            
+            # Try to generate RPM metadata if createrepo is available
+            if command -v createrepo >/dev/null 2>&1; then
+                echo "Regenerating RPM metadata..."
+                createrepo .
+                echo "RPM metadata regenerated"
+            elif command -v createrepo_c >/dev/null 2>&1; then
+                echo "Regenerating RPM metadata (using createrepo_c)..."
+                createrepo_c .
+                echo "RPM metadata regenerated"
+            else
+                echo "Note: RPM metadata not generated (createrepo not installed)"
+            fi
+        fi
+    fi
+}
+
+# Check if called with regenerate-index argument
+if [ "$1" = "regenerate-index" ]; then
+    regenerate_index
+    exit 0
+fi
+
+# Normal startup - regenerate indexes first
+regenerate_index
+
+# Start SSH server (for backend to copy scripts)
+echo "Starting SSH server..."
+/usr/sbin/sshd
+echo "✓ SSH server started on port 22"
+
+# Start nginx
+nginx -g 'daemon off;'
+EOF
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -158,6 +158,11 @@ func main() {
 		logrus.Fatal("Failed to migrate database:", err)
 	}
 
+	// 自动迁移敏感数据（加密未加密的凭据）
+	if err := database.MigrateSensitiveData(); err != nil {
+		logrus.WithError(err).Warn("Failed to migrate sensitive data, continuing...")
+	}
+
 	// 初始化默认数据
 	if err := database.SeedDefaultData(); err != nil {
 		logrus.WithError(err).Warn("Failed to seed default data, continuing...")
@@ -325,10 +330,34 @@ func main() {
 			"user_agent": c.GetHeader("User-Agent"),
 		}).Info("Manual CORS: Request received")
 
-		// 设置CORS头
-		c.Header("Access-Control-Allow-Origin", "*")
+		// 安全的CORS配置 - 只允许特定的来源
+		allowedOrigins := []string{
+			"https://ai-infra-matrix.top",
+			"https://www.ai-infra-matrix.top",
+			"http://localhost:3000",
+			"http://localhost:8080",
+			"http://127.0.0.1:3000",
+			"http://127.0.0.1:8080",
+		}
+
+		isAllowedOrigin := false
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				isAllowedOrigin = true
+				break
+			}
+		}
+
+		// 设置CORS头 - 只对允许的来源设置
+		if isAllowedOrigin {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+		} else if origin == "" {
+			// 同源请求或无Origin头的请求
+			c.Header("Access-Control-Allow-Origin", "https://ai-infra-matrix.top")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, X-External-Host")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		// 处理预检请求
@@ -460,11 +489,15 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	userHandler := handlers.NewUserHandler(database.DB)
 	// JupyterHub认证处理器（在多个地方使用）
 	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
+	// 邀请码验证处理器（公开API）
+	invitationCodePublicHandler := handlers.NewInvitationCodeHandler()
 
 	auth := api.Group("/auth")
 	{
+		auth.GET("/registration-config", userHandler.GetRegistrationConfig) // 公开API：获取注册配置
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
+		auth.GET("/validate-invitation-code", invitationCodePublicHandler.ValidateInvitationCode) // 公开API：验证邀请码
 		auth.POST("/login", userHandler.Login)
 		auth.POST("/verify-2fa", userHandler.Verify2FALogin) // 2FA验证登录
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
@@ -770,6 +803,19 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// RBAC初始化
 		admin.POST("/rbac/initialize", adminController.InitializeRBAC)
+
+		// 邀请码管理
+		invitationCodeHandler := handlers.NewInvitationCodeHandler()
+		invitationCodes := admin.Group("/invitation-codes")
+		{
+			invitationCodes.POST("", invitationCodeHandler.CreateInvitationCode)
+			invitationCodes.GET("", invitationCodeHandler.ListInvitationCodes)
+			invitationCodes.GET("/statistics", invitationCodeHandler.GetInvitationCodeStatistics)
+			invitationCodes.GET("/:id", invitationCodeHandler.GetInvitationCode)
+			invitationCodes.POST("/:id/disable", invitationCodeHandler.DisableInvitationCode)
+			invitationCodes.POST("/:id/enable", invitationCodeHandler.EnableInvitationCode)
+			invitationCodes.DELETE("/:id", invitationCodeHandler.DeleteInvitationCode)
+		}
 
 		// 日志级别管理
 		logging := admin.Group("/logging")
@@ -1372,12 +1418,103 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.GET("/oauth/providers/:id", securityHandler.GetOAuthProvider)
 		security.PUT("/oauth/providers/:id", securityHandler.UpdateOAuthProvider)
 
-		// 全局安全配置
-		security.GET("/config", securityHandler.GetSecurityConfig)
-		security.PUT("/config", securityHandler.UpdateSecurityConfig)
+		// 全局安全配置 - 只允许管理员访问
+		security.GET("/config", middleware.AdminMiddleware(), securityHandler.GetSecurityConfig)
+		security.PUT("/config", middleware.AdminMiddleware(), securityHandler.UpdateSecurityConfig)
 
 		// 安全审计日志
 		security.GET("/audit-logs", securityHandler.ListAuditLogs)
+
+		// 登录保护管理
+		security.GET("/locked-accounts", securityHandler.GetLockedAccounts)
+		security.POST("/accounts/:username/unlock", securityHandler.UnlockAccount)
+		security.GET("/blocked-ips", securityHandler.GetBlockedIPsFromProtection)
+		security.POST("/block-ip", securityHandler.BlockIPManually)
+		security.POST("/ips/:ip/unblock", securityHandler.UnblockIP)
+		security.GET("/login-attempts", securityHandler.GetLoginAttempts)
+		security.GET("/ip-stats", securityHandler.GetIPLoginStats)
+		security.GET("/ip-stats/:ip", securityHandler.GetIPStatsDetail)
+		security.GET("/login-stats/summary", securityHandler.GetLoginStatsSummary)
+		security.POST("/login-records/cleanup", securityHandler.CleanupLoginRecords)
+
+		// 客户端信息和GeoIP查询
+		security.GET("/client-info", securityHandler.GetClientInfo)
+		security.GET("/geoip/:ip", securityHandler.LookupIPGeoInfo)
+		security.POST("/geoip/batch", securityHandler.BatchLookupIPGeoInfo)
+		security.GET("/geoip/stats", securityHandler.GetGeoIPCacheStats)
+	}
+
+	// ArgoCD GitOps 管理路由（需要认证）
+	argoCDHandler := handlers.NewArgoCDHandler()
+	argocd := api.Group("/argocd")
+	argocd.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// ArgoCD 服务状态和配置
+		argocd.GET("/status", argoCDHandler.GetArgoCDStatus)
+		argocd.POST("/status/refresh", argoCDHandler.RefreshArgoCDAvailability)
+		argocd.GET("/version", argoCDHandler.GetVersion)
+		argocd.GET("/settings", argoCDHandler.GetSettings)
+
+		// 应用管理
+		argocd.GET("/applications", argoCDHandler.ListApplications)
+		argocd.GET("/applications/:name", argoCDHandler.GetApplication)
+		argocd.POST("/applications", argoCDHandler.CreateApplication)
+		argocd.DELETE("/applications/:name", argoCDHandler.DeleteApplication)
+		argocd.POST("/applications/:name/sync", argoCDHandler.SyncApplication)
+		argocd.POST("/applications/:name/refresh", argoCDHandler.RefreshApplication)
+		argocd.GET("/applications/:name/resource-tree", argoCDHandler.GetApplicationResourceTree)
+
+		// 仓库管理
+		argocd.GET("/repositories", argoCDHandler.ListRepositories)
+		argocd.POST("/repositories", argoCDHandler.CreateRepository)
+		argocd.DELETE("/repositories/*repo", argoCDHandler.DeleteRepository)
+
+		// 集群管理 (ArgoCD 内部集群)
+		argocd.GET("/clusters", argoCDHandler.ListClusters)
+		argocd.GET("/clusters/managed", argoCDHandler.ListArgoCDManagedClusters)
+		argocd.POST("/clusters/sync-all", argoCDHandler.SyncAllClusters)
+
+		// 项目管理
+		argocd.GET("/projects", argoCDHandler.ListProjects)
+		argocd.GET("/projects/:name", argoCDHandler.GetProject)
+		argocd.POST("/projects", argoCDHandler.CreateProject)
+	}
+
+	// Keycloak 身份认证管理路由（需要认证）
+	keycloakHandler := handlers.NewKeycloakHandler()
+	keycloak := api.Group("/keycloak")
+	keycloak.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 服务器信息
+		keycloak.GET("/server-info", keycloakHandler.GetServerInfo)
+
+		// Realm 管理
+		keycloak.GET("/realms", keycloakHandler.ListRealms)
+		keycloak.GET("/realms/:realm", keycloakHandler.GetRealm)
+
+		// 用户管理
+		keycloak.GET("/realms/:realm/users", keycloakHandler.ListUsers)
+		keycloak.GET("/realms/:realm/users/:userId", keycloakHandler.GetUser)
+		keycloak.POST("/realms/:realm/users", keycloakHandler.CreateUser)
+		keycloak.PUT("/realms/:realm/users/:userId", keycloakHandler.UpdateUser)
+		keycloak.DELETE("/realms/:realm/users/:userId", keycloakHandler.DeleteUser)
+		keycloak.PUT("/realms/:realm/users/:userId/reset-password", keycloakHandler.ResetPassword)
+		keycloak.GET("/realms/:realm/users/:userId/role-mappings", keycloakHandler.GetUserRoles)
+		keycloak.GET("/realms/:realm/users/:userId/sessions", keycloakHandler.GetUserSessions)
+
+		// 客户端管理
+		keycloak.GET("/realms/:realm/clients", keycloakHandler.ListClients)
+		keycloak.GET("/realms/:realm/clients/:clientId", keycloakHandler.GetClient)
+
+		// 用户组管理
+		keycloak.GET("/realms/:realm/groups", keycloakHandler.ListGroups)
+		keycloak.GET("/realms/:realm/groups/:groupId", keycloakHandler.GetGroup)
+
+		// 角色管理
+		keycloak.GET("/realms/:realm/roles", keycloakHandler.ListRoles)
+
+		// 会话管理
+		keycloak.GET("/realms/:realm/sessions", keycloakHandler.ListSessions)
 	}
 
 	// 基础设施审计日志路由（需要认证）

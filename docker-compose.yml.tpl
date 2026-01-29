@@ -192,6 +192,8 @@ services:
     environment:
       DYNAMIC_CONFIG_ENABLED: 'true'
       TZ: Asia/Shanghai
+      # 设置基础路径以支持反向代理
+      SERVER_SERVLET_CONTEXT_PATH: /kafka-ui-backend
     expose:
       - "8080"
     ports:
@@ -250,8 +252,8 @@ services:
   backend-init:
     image: ai-infra-backend-init:{{IMAGE_TAG}}
     build:
-      context: ./src/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/backend/Dockerfile
       target: backend-init
       args:
         VERSION: {{IMAGE_TAG}}
@@ -298,8 +300,8 @@ services:
   backend:
     image: ai-infra-backend:{{IMAGE_TAG}}
     build:
-      context: ./src/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/backend/Dockerfile
       target: backend
       args:
         VERSION: {{IMAGE_TAG}}
@@ -367,6 +369,8 @@ services:
       SEAWEEDFS_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
       # E2E 测试配置（开发/测试环境）
       E2E_ALLOW_FAKE_LDAP: "${E2E_ALLOW_FAKE_LDAP:-true}"
+      # 注册安全策略
+      REGISTRATION_REQUIRE_INVITATION_CODE: "${REGISTRATION_REQUIRE_INVITATION_CODE:-true}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       TZ: "Asia/Shanghai"
       # 外部脚本目录 - 优先加载外部脚本模板
@@ -415,8 +419,8 @@ services:
   frontend:
     image: ai-infra-frontend:{{IMAGE_TAG}}
     build:
-      context: ./src/frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/frontend/Dockerfile
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
@@ -832,10 +836,10 @@ services:
     restart: unless-stopped
 
   # Redis 监控界面 (可选)
+  # 注意：RedisInsight 2.68+ 已原生支持多架构，无需指定 platform
   redis-insight:
     image: redis/redisinsight:{{REDISINSIGHT_VERSION}}
     container_name: ai-infra-redis-insight
-    platform: {{DOCKER_HOST_PLATFORM}}
     environment:
       TZ: Asia/Shanghai
     expose:
@@ -864,7 +868,9 @@ services:
       STATIC_URL_PREFIX: "${STATIC_URL_PREFIX:-/gitea}"
       GITEA__server__ROOT_URL: "${ROOT_URL}"
       GITEA__server__SUBURL: "${SUBURL:-/gitea}"
-      DOMAIN: "${DOMAIN}"
+      # 使用 GITEA__ 前缀直接设置 server 配置，避免嵌套变量替换问题
+      GITEA__server__DOMAIN: "${EXTERNAL_HOST}"
+      GITEA__server__SSH_DOMAIN: "${EXTERNAL_HOST}"
       PROTOCOL: "${GITEA_PROTOCOL:-http}"
       HTTP_PORT: "${GITEA_HTTP_PORT:-3000}"
       GITEA_DB_TYPE: "${GITEA_DB_TYPE:-postgres}"
@@ -1012,8 +1018,8 @@ services:
   # AppHub - 二进制包仓库服务 (DEB/RPM packages)
   apphub:
     build:
-      context: ./src/apphub
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/apphub/Dockerfile
     image: ${PRIVATE_REGISTRY}ai-infra-apphub:{{IMAGE_TAG}}
     container_name: ai-infra-apphub
     env_file:
@@ -1104,6 +1110,214 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # ==================== Keycloak IAM 服务 ====================
+  # Keycloak 统一身份认证服务
+  # 提供 SSO、OIDC、SAML 等认证协议支持
+  # 启动方式: docker-compose --profile keycloak up -d
+  keycloak:
+    image: ai-infra-keycloak:{{IMAGE_TAG}}
+    build:
+      context: ./src/keycloak
+      dockerfile: Dockerfile.tpl
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+        KEYCLOAK_VERSION: ${KEYCLOAK_VERSION:-26.0}
+    container_name: ai-infra-keycloak
+    profiles:
+      - keycloak
+      - sso
+      - full
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 数据库配置
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      # 主机名配置
+      KC_HOSTNAME: ${EXTERNAL_HOST:-localhost}
+      KC_HOSTNAME_PORT: ${EXTERNAL_PORT:-8080}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      # KC_HTTP_RELATIVE_PATH 是构建时选项，已在 Dockerfile 中设置为 /auth
+      # 代理配置
+      KC_PROXY_HEADERS: xforwarded
+      # 健康检查
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      # 管理员配置
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # 客户端密钥 (供 realm 导入使用)
+      KEYCLOAK_BACKEND_CLIENT_SECRET: ${KEYCLOAK_BACKEND_CLIENT_SECRET:-backend-client-secret}
+      KEYCLOAK_GITEA_CLIENT_SECRET: ${KEYCLOAK_GITEA_CLIENT_SECRET:-gitea-client-secret}
+      KEYCLOAK_N9E_CLIENT_SECRET: ${KEYCLOAK_N9E_CLIENT_SECRET:-n9e-client-secret}
+      KEYCLOAK_ARGOCD_CLIENT_SECRET: ${KEYCLOAK_ARGOCD_CLIENT_SECRET:-argocd-client-secret}
+      KEYCLOAK_JUPYTERHUB_CLIENT_SECRET: ${KEYCLOAK_JUPYTERHUB_CLIENT_SECRET:-jupyterhub-client-secret}
+      # 外部访问地址 (用于 realm 配置)
+      EXTERNAL_SCHEME: ${EXTERNAL_SCHEME:-https}
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+      EXTERNAL_PORT: ${EXTERNAL_PORT:-8080}
+      HTTPS_PORT: ${HTTPS_PORT:-8443}
+      # LDAP 配置 (用于 LDAP Federation)
+      LDAP_SERVER: ${LDAP_SERVER:-openldap}
+      LDAP_PORT: ${LDAP_PORT:-389}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=ai-infra,dc=com}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-cn=admin,dc=ai-infra,dc=com}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_USER_BASE: ${LDAP_USER_BASE:-ou=users,dc=ai-infra,dc=com}
+    expose:
+      - "8080"
+      - "8443"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${KEYCLOAK_HTTP_PORT:-8180}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${KEYCLOAK_HTTPS_PORT:-8543}:8443"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # ==================== ArgoCD GitOps 服务 ====================
+  # ArgoCD 持续部署服务
+  # 提供 GitOps 风格的 Kubernetes 应用部署
+  # 启动方式: docker-compose --profile argocd up -d
+  argocd-server:
+    image: ai-infra-argocd:{{IMAGE_TAG}}
+    build:
+      context: ./src/argocd
+      dockerfile: Dockerfile.tpl
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+        ARGOCD_VERSION: ${ARGOCD_VERSION:-v2.13.3}
+    container_name: ai-infra-argocd-server
+    profiles:
+      - argocd
+      - gitops
+      - full
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # ArgoCD 服务器配置
+      ARGOCD_SERVER_INSECURE: "true"
+      ARGOCD_SERVER_BASEHREF: /argocd
+      ARGOCD_SERVER_ROOTPATH: /argocd
+      ARGOCD_SERVER_DISABLE_AUTH: "false"
+      # Redis 配置 (ArgoCD 使用 Redis 作为缓存)
+      REDIS_SERVER: ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Dex/OIDC 配置 (Keycloak 集成)
+      ARGOCD_DEX_SERVER_DISABLE_TLS: "true"
+      # 仓库配置 (Gitea 集成)
+      ARGOCD_REPO_SERVER_STRICT_TLS: "false"
+      # Keycloak OIDC 配置
+      KEYCLOAK_ISSUER: ${EXTERNAL_SCHEME:-https}://${EXTERNAL_HOST:-localhost}:${EXTERNAL_PORT:-8080}/auth/realms/ai-infra
+      KEYCLOAK_ARGOCD_CLIENT_ID: argocd
+      KEYCLOAK_ARGOCD_CLIENT_SECRET: ${KEYCLOAK_ARGOCD_CLIENT_SECRET:-argocd-client-secret}
+      # 外部访问地址
+      EXTERNAL_SCHEME: ${EXTERNAL_SCHEME:-https}
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+      EXTERNAL_PORT: ${EXTERNAL_PORT:-8080}
+      HTTPS_PORT: ${HTTPS_PORT:-8443}
+    command: ["argocd-server", "--insecure", "--basehref", "/argocd", "--rootpath", "/argocd"]
+    expose:
+      - "8080"
+      - "8083"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ARGOCD_HTTP_PORT:-8280}:8080"
+    volumes:
+      - argocd_data:/home/argocd
+      - ./src/argocd/argocd-cm.yaml:/home/argocd/argocd-cm.yaml:ro
+      - ./src/argocd/argocd-rbac-cm.yaml:/home/argocd/argocd-rbac-cm.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/argocd/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # ArgoCD Repo Server
+  argocd-repo-server:
+    image: quay.io/argoproj/argocd:${ARGOCD_VERSION:-v2.13.3}
+    container_name: ai-infra-argocd-repo-server
+    profiles:
+      - argocd
+      - gitops
+      - full
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_SERVER: ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["argocd-repo-server"]
+    expose:
+      - "8081"
+    volumes:
+      - argocd_repo_data:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # ArgoCD Application Controller
+  argocd-application-controller:
+    image: quay.io/argoproj/argocd:${ARGOCD_VERSION:-v2.13.3}
+    container_name: ai-infra-argocd-controller
+    profiles:
+      - argocd
+      - gitops
+      - full
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_SERVER: ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      ARGOCD_RECONCILIATION_TIMEOUT: 180s
+    command: ["argocd-application-controller", "--repo-server", "argocd-repo-server:8081"]
+    volumes:
+      - argocd_controller_data:/tmp
+    depends_on:
+      argocd-repo-server:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - ai-infra-network
     restart: unless-stopped
@@ -1326,6 +1540,14 @@ volumes:
     name: ai-infra-nightingale-logs
   victoriametrics_data:
     name: ai-infra-victoriametrics-data
+  keycloak_data:
+    name: ai-infra-keycloak-data
+  argocd_data:
+    name: ai-infra-argocd-data
+  argocd_repo_data:
+    name: ai-infra-argocd-repo-data
+  argocd_controller_data:
+    name: ai-infra-argocd-controller-data
 
 networks:
   ai-infra-network:

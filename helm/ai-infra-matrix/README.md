@@ -271,6 +271,37 @@ helm upgrade ai-infra-matrix ./helm/ai-infra-matrix -n ai-infra-matrix --set bac
 
 ## Security
 
+### Login Protection
+
+The platform includes comprehensive login protection features:
+
+**Account Locking**: Automatically locks accounts after multiple failed login attempts.
+
+**IP Blocking**: Blocks suspicious IPs that show malicious login behavior.
+
+**Login Statistics**: Tracks and analyzes login patterns for security monitoring.
+
+```yaml
+# Login security configuration in values.yaml
+env:
+  # Admin IP Whitelist
+  ADMIN_IP_WHITELIST_ENABLED: "true"
+  ADMIN_IP_RESTRICTED: "true"
+  ADMIN_ALLOWED_IPS: "192.168.3.101,192.168.3.1"
+  ADMIN_ALLOWED_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8"
+  TRUST_PROXY_HEADER: "true"
+  
+  # Login Rate Limiting
+  LOGIN_MAX_ATTEMPTS: "5"              # Max failed attempts before locking
+  LOGIN_BLOCK_DURATION_MINUTES: "15"   # Account lock duration (minutes)
+```
+
+**Security Management UI**: Access the security management page at `Admin Center > Security Management` to:
+- View suspicious IP addresses and their risk scores
+- Manually block/unblock IPs
+- View and unlock locked accounts
+- Monitor login statistics
+
 ### RBAC
 
 The chart creates appropriate RBAC resources:

@@ -22,7 +22,7 @@ type SyncStatus struct {
 	Status    string        `json:"status"` // running, completed, failed
 	Progress  float64       `json:"progress"`
 	Message   string        `json:"message"`
-	Result    *SyncResult   `json:"result,omitempty"`
+	Result    *LDAPSyncResult   `json:"result,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	StartTime time.Time     `json:"start_time"`
 	EndTime   *time.Time    `json:"end_time,omitempty"`
@@ -51,7 +51,7 @@ func NewLDAPSyncService(db *gorm.DB, ldapService *LDAPService, userService *User
 }
 
 // SyncResult 同步结果
-type SyncResult struct {
+type LDAPSyncResult struct {
 	UsersCreated  int           `json:"users_created"`
 	UsersUpdated  int           `json:"users_updated"`
 	GroupsCreated int           `json:"groups_created"`
@@ -66,8 +66,8 @@ type SyncResult struct {
 }
 
 // SyncLDAPUsersAndGroups 同步LDAP用户和组到PostgreSQL数据库
-func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
-	result := &SyncResult{
+func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*LDAPSyncResult, error) {
+	result := &LDAPSyncResult{
 		StartTime: time.Now(),
 		Errors:    []string{},
 	}
@@ -124,14 +124,14 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 }
 
 // syncUserGroups 同步LDAP用户组
-func (s *LDAPSyncService) syncUserGroups(conn *ldap.Conn, config *models.LDAPConfig, result *SyncResult) error {
+func (s *LDAPSyncService) syncUserGroups(conn *ldap.Conn, config *models.LDAPConfig, result *LDAPSyncResult) error {
 	// 由于模型中没有GroupFilter字段，跳过组同步
 	log.Printf("组同步功能已禁用")
 	return nil
 }
 
 // syncUsers 同步LDAP用户
-func (s *LDAPSyncService) syncUsers(conn *ldap.Conn, config *models.LDAPConfig, result *SyncResult) error {
+func (s *LDAPSyncService) syncUsers(conn *ldap.Conn, config *models.LDAPConfig, result *LDAPSyncResult) error {
 	log.Printf("开始同步用户...")
 
 	// 构造用户搜索过滤器
@@ -196,7 +196,7 @@ func (s *LDAPSyncService) syncUsers(conn *ldap.Conn, config *models.LDAPConfig, 
 }
 
 // syncSingleUser 同步单个用户
-func (s *LDAPSyncService) syncSingleUser(username, displayName, email, userDN string, userGroups []string, config *models.LDAPConfig, result *SyncResult) error {
+func (s *LDAPSyncService) syncSingleUser(username, displayName, email, userDN string, userGroups []string, config *models.LDAPConfig, result *LDAPSyncResult) error {
 	// 检查用户是否已存在
 	existingUser, err := s.userService.GetUserByUsername(username)
 
@@ -275,7 +275,7 @@ func (s *LDAPSyncService) getUserGroupsFromLDAP(conn *ldap.Conn, config *models.
 }
 
 // assignUserToGroups 将用户分配到组
-func (s *LDAPSyncService) assignUserToGroups(userID uint, groupNames []string, result *SyncResult) error {
+func (s *LDAPSyncService) assignUserToGroups(userID uint, groupNames []string, result *LDAPSyncResult) error {
 	// 先清除用户现有的组关系
 	if err := s.db.Where("user_id = ?", userID).Delete(&models.UserGroupMembership{}).Error; err != nil {
 		return fmt.Errorf("清除用户组关系失败: %v", err)
@@ -329,7 +329,7 @@ func (s *LDAPSyncService) isUserAdmin(userGroups []string, adminGroupsConfig str
 }
 
 // assignAdminRole 分配管理员角色
-func (s *LDAPSyncService) assignAdminRole(userID uint, result *SyncResult) error {
+func (s *LDAPSyncService) assignAdminRole(userID uint, result *LDAPSyncResult) error {
 	// 首先尝试查找super-admin角色，如果找不到则使用admin角色
 	var adminRole models.Role
 	if err := s.db.Where("name = ?", models.RoleSuperAdmin).First(&adminRole).Error; err != nil {

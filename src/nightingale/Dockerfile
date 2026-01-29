@@ -87,14 +87,51 @@ RUN set -eux; \
     ls -la
 
 # Install dependencies and build with custom prefix
+# Note: esbuild crashes under QEMU emulation (ARM64 host building AMD64)
+# due to Go runtime "lfstack.push" error in emulated environment.
+# Strategy:
+#   1. Try normal npm build first
+#   2. If build fails (QEMU), download pre-built frontend from n9e/fe releases
+#   3. Pre-built frontend works but lacks custom VITE_PREFIX (default /)
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
     fi; \
-    npm install --legacy-peer-deps; \
-    echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
-    VITE_PREFIX=${VITE_PREFIX} npm run build; \
-    # The build output is in /fe/pub directory
+    BUILD_ARCH=$(uname -m); \
+    echo "Build architecture: ${BUILD_ARCH}"; \
+    # Try to build frontend with custom VITE_PREFIX
+    BUILD_SUCCESS=false; \
+    npm install --legacy-peer-deps && \
+    echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}" && \
+    NODE_OPTIONS="--max-old-space-size=4096" VITE_PREFIX=${VITE_PREFIX} npm run build && \
+    BUILD_SUCCESS=true || true; \
+    # If build failed (likely QEMU), download pre-built frontend from n9e/fe releases
+    if [ "$BUILD_SUCCESS" = "false" ]; then \
+        echo "⚠️  Frontend build failed (likely QEMU emulation)"; \
+        echo "📦 Downloading pre-built frontend from n9e/fe releases..."; \
+        # n9e/fe releases contain pre-built pub/ directory
+        FE_RELEASE_URL="https://github.com/n9e/fe/releases/download/${N9E_FE_VERSION}/n9e-fe-${N9E_FE_VERSION}.tar.gz"; \
+        # Try with GITHUB_MIRROR first
+        if [ -n "${GITHUB_MIRROR}" ]; then \
+            FE_RELEASE_URL="${GITHUB_MIRROR}${FE_RELEASE_URL}"; \
+        fi; \
+        echo "Downloading from: ${FE_RELEASE_URL}"; \
+        curl -fsSL "${FE_RELEASE_URL}" | tar -xz || \
+        curl -fsSL "https://github.com/n9e/fe/releases/download/${N9E_FE_VERSION}/n9e-fe-${N9E_FE_VERSION}.tar.gz" | tar -xz; \
+        # Verify pub directory exists
+        if [ -d pub ]; then \
+            echo "✓ Using pre-built frontend from n9e/fe releases"; \
+            echo "⚠️  Note: Pre-built frontend uses default BasePath (/)"; \
+            echo "    Custom VITE_PREFIX=${VITE_PREFIX} was not applied"; \
+            echo "    For custom path, build on native platform or use nginx rewrite"; \
+        else \
+            echo "ERROR: pub directory not found in release"; \
+            exit 1; \
+        fi; \
+    else \
+        echo "✓ Frontend built successfully with VITE_PREFIX=${VITE_PREFIX}"; \
+    fi; \
+    # Verify pub directory exists
     ls -la pub/
 
 # ============================================================
@@ -153,8 +190,9 @@ RUN set -eux; \
     # Embed front-end files
     $(go env GOPATH)/bin/statik -src=./pub -dest=./front
 
-# Step 2: Download Go dependencies with fallback
+# Step 2: Tidy and download Go dependencies with fallback
 RUN set -eux; \
+    go mod tidy && \
     echo "Downloading Go dependencies with GOPROXY=${GOPROXY}..."; \
     if ! go mod download; then \
         echo "Primary GOPROXY failed, trying goproxy.io..."; \

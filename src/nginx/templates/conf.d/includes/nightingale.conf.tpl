@@ -60,7 +60,7 @@ location ^~ /nightingale/ {
     # This script reads lang parameter from URL and syncs it to localStorage
     # Nightingale uses localStorage key 'language' to store language preference
     sub_filter_once off;
-    sub_filter_types text/html;
+    # Note: sub_filter_types defaults to text/html, no need to specify explicitly
     sub_filter '</head>' '<script>
 (function(){
   try {

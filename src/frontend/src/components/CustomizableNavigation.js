@@ -19,7 +19,9 @@ import {
   ControlOutlined,
   ApiOutlined,
   MenuOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  DeploymentUnitOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
@@ -36,7 +38,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ProjectOutlined',
     visible: true,
     order: 0,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['data-developer', 'sre', 'audit', 'user', 'admin', 'super-admin']
   },
   {
     id: 'monitoring',
@@ -45,7 +47,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'DashboardOutlined',
     visible: true,
     order: 1,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'gitea',
@@ -54,7 +56,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'CodeOutlined',
     visible: true,
     order: 1,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['sre', 'user', 'admin', 'super-admin']
   },
   {
     id: 'kubernetes',
@@ -63,7 +65,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'CloudServerOutlined',
     visible: true,
     order: 2,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'ansible',
@@ -72,7 +74,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'FileTextOutlined',
     visible: true,
     order: 3,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'jupyterhub',
@@ -81,7 +83,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ExperimentTwoTone',
     visible: true,
     order: 4,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['data-developer', 'sre', 'user', 'admin', 'super-admin']
   },
   {
     id: 'slurm',
@@ -108,7 +110,34 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ControlOutlined',
     visible: true,
     order: 7,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
+    id: 'kafka-ui',
+    key: '/kafka-ui',
+    labelKey: 'nav.kafkaUI',
+    icon: 'ApiOutlined',
+    visible: true,
+    order: 8,
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
+    id: 'argocd',
+    key: '/argocd',
+    labelKey: 'nav.argocd',
+    icon: 'DeploymentUnitOutlined',
+    visible: true,
+    order: 9,
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
+    id: 'keycloak',
+    key: '/keycloak',
+    labelKey: 'nav.keycloak',
+    icon: 'SafetyCertificateOutlined',
+    visible: true,
+    order: 10,
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'role-templates',
@@ -116,7 +145,7 @@ const DEFAULT_NAV_ITEMS = [
     labelKey: 'nav.roleTemplates',
     icon: 'TeamOutlined',
     visible: true,
-    order: 8,
+    order: 11,
     roles: ['admin', 'super-admin']
   }
 ];
@@ -353,7 +382,9 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     'TeamOutlined': <TeamOutlined />,
     'ControlOutlined': <ControlOutlined />,
     'ApiOutlined': <ApiOutlined />,
-    'MenuOutlined': <MenuOutlined />
+    'MenuOutlined': <MenuOutlined />,
+    'DeploymentUnitOutlined': <DeploymentUnitOutlined />,
+    'SafetyCertificateOutlined': <SafetyCertificateOutlined />
   };
 
   useEffect(() => {

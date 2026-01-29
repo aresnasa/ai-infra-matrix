@@ -8,7 +8,8 @@ const config = {
   expect: { timeout: 10_000 },
   reporter: [['list']],
   use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:8080',
+    baseURL: process.env.BASE_URL || 'https://localhost:8443',
+    ignoreHTTPSErrors: true,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

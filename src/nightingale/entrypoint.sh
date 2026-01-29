@@ -18,6 +18,8 @@ echo "Source config directory: ${N9E_CONFIGS_SRC}"
 echo "Runtime config directory: ${N9E_CONFIGS}"
 
 # 修复数据库中的 JSON 字段（防止 "unexpected end of JSON input" 错误）
+# 注意：此函数需要 psql 客户端。如果容器内没有 psql，将跳过修复
+# 对于生产环境，建议通过 init 容器或外部脚本修复数据库
 fix_json_fields() {
     local pg_host="${POSTGRES_HOST:-postgres}"
     local pg_port="${POSTGRES_PORT:-5432}"
@@ -25,31 +27,90 @@ fix_json_fields() {
     local pg_pass="${POSTGRES_PASSWORD:-}"
     local pg_db="${N9E_DB_NAME:-nightingale}"
     
+    # 检查 psql 是否可用
+    if ! command -v psql &> /dev/null; then
+        echo "INFO: psql not available in container, skipping JSON field fix"
+        echo "If you see JSON parse errors, run this on the host:"
+        echo "  docker exec ai-infra-postgres psql -U postgres -d nightingale -c \"UPDATE users SET contacts = '{}' WHERE contacts = '' OR contacts IS NULL;\""
+        return 0
+    fi
+    
     echo "Checking and fixing JSON fields in database..."
     
-    # 等待 PostgreSQL 可用
+    # 等待 PostgreSQL 服务可用（先连接到 postgres 数据库）
     local max_retries=30
     local retry=0
+    echo "Waiting for PostgreSQL service to be ready..."
     while [ $retry -lt $max_retries ]; do
-        if PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" -c '\q' 2>/dev/null; then
+        if PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "postgres" -c '\q' 2>/dev/null; then
+            echo "PostgreSQL service is ready"
             break
         fi
         retry=$((retry + 1))
-        echo "Waiting for PostgreSQL... ($retry/$max_retries)"
+        echo "Waiting for PostgreSQL service... ($retry/$max_retries)"
         sleep 2
     done
     
     if [ $retry -eq $max_retries ]; then
-        echo "WARNING: PostgreSQL not available, skipping JSON field fix"
+        echo "WARNING: PostgreSQL service not available, skipping JSON field fix"
         return 0
     fi
     
-    # 修复 users 表的 contacts 字段（将 NULL 或空字符串转换为空 JSON 对象）
+    # 检查 nightingale 数据库是否存在
+    local db_exists=$(PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "postgres" -tAc "SELECT 1 FROM pg_database WHERE datname='${pg_db}'" 2>/dev/null)
+    
+    if [ "$db_exists" != "1" ]; then
+        echo "Database '${pg_db}' does not exist yet, skipping JSON field fix (will be created by n9e)"
+        return 0
+    fi
+    
+    # 检查 users 表是否存在
+    local table_exists=$(PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='users'" 2>/dev/null)
+    
+    if [ "$table_exists" != "1" ]; then
+        echo "Table 'users' does not exist yet, skipping JSON field fix (will be created by n9e)"
+        return 0
+    fi
+    
+    # 修复 users 表的 contacts 字段
+    # 1. 将 NULL 或空字符串转换为空 JSON 对象
+    # 2. 修复无效的 JSON（不是以 { 或 [ 开头的，或者不是有效 JSON 的）
+    echo "Fixing users.contacts field..."
     PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" <<-EOSQL 2>/dev/null || true
-        UPDATE users SET contacts = '{}' WHERE contacts IS NULL OR contacts = '';
+        -- 修复 NULL 或空字符串
+        UPDATE users SET contacts = '{}' WHERE contacts IS NULL OR contacts = '' OR TRIM(contacts) = '';
+        
+        -- 修复不是有效 JSON 对象/数组的值（不以 { 或 [ 开头）
+        UPDATE users SET contacts = '{}' WHERE contacts IS NOT NULL AND contacts != '' 
+            AND LEFT(TRIM(contacts), 1) NOT IN ('{', '[');
+        
+        -- 尝试验证 JSON 格式，如果无效则重置为 {}
+        UPDATE users SET contacts = '{}' 
+        WHERE contacts IS NOT NULL AND contacts != '' 
+            AND NOT (contacts::jsonb IS NOT NULL) IS NOT FALSE;
+EOSQL
+
+    # 修复其他可能有 JSON 字段的表
+    echo "Fixing other JSON fields..."
+    PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" <<-EOSQL 2>/dev/null || true
+        -- 修复 alert_mutes 表的 tags 字段
+        UPDATE alert_mutes SET tags = '[]' WHERE tags IS NULL OR tags = '' OR TRIM(tags) = '';
+        
+        -- 修复 alert_subscribes 表的相关字段
+        UPDATE alert_subscribes SET tags = '[]' WHERE tags IS NULL OR tags = '' OR TRIM(tags) = '';
+        UPDATE alert_subscribes SET user_ids = '[]' WHERE user_ids IS NULL OR user_ids = '' OR TRIM(user_ids) = '';
+        UPDATE alert_subscribes SET webhooks = '[]' WHERE webhooks IS NULL OR webhooks = '' OR TRIM(webhooks) = '';
+        
+        -- 修复 alert_rules 表的相关字段
+        UPDATE alert_rules SET notify_channels = '[]' WHERE notify_channels IS NULL OR notify_channels = '' OR TRIM(notify_channels) = '';
+        UPDATE alert_rules SET notify_groups = '[]' WHERE notify_groups IS NULL OR notify_groups = '' OR TRIM(notify_groups) = '';
+        UPDATE alert_rules SET callbacks = '[]' WHERE callbacks IS NULL OR callbacks = '' OR TRIM(callbacks) = '';
+        UPDATE alert_rules SET append_tags = '[]' WHERE append_tags IS NULL OR append_tags = '' OR TRIM(append_tags) = '';
+        UPDATE alert_rules SET annotations = '{}' WHERE annotations IS NULL OR annotations = '' OR TRIM(annotations) = '';
+        UPDATE alert_rules SET extra_config = '{}' WHERE extra_config IS NULL OR extra_config = '' OR TRIM(extra_config) = '';
 EOSQL
     
-    echo "JSON fields check complete"
+    echo "JSON fields fix complete"
 }
 
 # 复制配置文件到可写目录并替换环境变量

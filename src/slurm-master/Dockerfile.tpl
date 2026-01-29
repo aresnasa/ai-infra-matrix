@@ -241,9 +241,24 @@ RUN mkdir -p /etc/slurm \
 # 复制 third_party 目录以支持离线构建
 COPY third_party/ /third_party/
 
-# 尝试从AppHub安装SLURM包（动态发现所有可用包）
+# =============================================================================
+# SLURM 安装策略
+# =============================================================================
+# 1. 首选：从 AppHub 安装（确保版本一致性）
+# 2. 回退：如果 ALLOW_SYSTEM_SLURM=true，则从 Ubuntu 官方仓库安装
+# 
+# 跨架构构建说明：
+# - AppHub 镜像包含的 SLURM deb 包是架构相关的
+# - 当构建目标架构与 AppHub 架构不匹配时，需要启用系统回退
+# - Mac 上通过 Rosetta/QEMU 可以切换 AppHub 架构
+# - Linux 上建议使用系统回退 (ALLOW_SYSTEM_SLURM=true)
+# =============================================================================
 ARG APPHUB_URL=http://apphub:80
+ARG ALLOW_SYSTEM_SLURM=false
+
 RUN set -eux; \
+    SLURM_INSTALLED=false; \
+    SLURM_SOURCE="none"; \
     echo "🔍 尝试从AppHub安装SLURM ${SLURM_VERSION} 包..."; \
     # 添加AppHub源
     echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
@@ -320,31 +335,85 @@ RUN set -eux; \
             SLURM_SOURCE="AppHub-NoPackages"; \
         fi; \
         \
-        # 如果AppHub安装失败，报错并退出（不使用系统仓库）
+        # 如果AppHub安装失败，检查是否允许回退到系统仓库
         if [ "$SLURM_INSTALLED" != "true" ]; then \
-            echo "❌ AppHub安装失败，构建终止"; \
-            echo "💡 提示: 确保docker-compose构建时AppHub服务可用"; \
-            echo "💡 解决方案: 先启动AppHub服务，然后再构建slurm-master"; \
-            exit 1; \
+            if [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
+                echo "⚠️  AppHub安装失败，尝试从Ubuntu官方仓库安装..."; \
+            else \
+                echo "❌ AppHub安装失败，构建终止"; \
+                echo "💡 提示: 确保docker-compose构建时AppHub服务可用"; \
+                echo "💡 解决方案: 先启动AppHub服务，然后再构建slurm-master"; \
+                echo "💡 或者: 设置 --build-arg ALLOW_SYSTEM_SLURM=true 允许从系统仓库安装"; \
+                exit 1; \
+            fi; \
         fi; \
     else \
-        echo "❌ AppHub连接失败，构建终止"; \
-        echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
-        echo "💡 AppHub URL: ${APPHUB_URL}"; \
+        echo "⚠️  AppHub SLURM包不可用（返回404或连接失败）"; \
+        if [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
+            echo "📦 允许系统回退，将尝试从Ubuntu官方仓库安装..."; \
+        else \
+            echo "❌ AppHub连接失败，构建终止"; \
+            echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
+            echo "💡 AppHub URL: ${APPHUB_URL}"; \
+            echo ""; \
+            echo "📋 故障排查:"; \
+            echo "   1. 确保AppHub服务正在运行:"; \
+            echo "      docker ps | grep apphub"; \
+            echo ""; \
+            echo "   2. 检查AppHub端口映射:"; \
+            echo "      docker port ai-infra-apphub"; \
+            echo ""; \
+            echo "   3. 测试AppHub连接:"; \
+            echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
+            echo ""; \
+            echo "   4. 允许系统回退（跨架构构建时）:"; \
+            echo "      --build-arg ALLOW_SYSTEM_SLURM=true"; \
+            echo ""; \
+            exit 1; \
+        fi; \
+    fi; \
+    \
+    # ==========================================================================
+    # 系统仓库回退：如果AppHub不可用且允许回退
+    # ==========================================================================
+    if [ "$SLURM_INSTALLED" != "true" ] && [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
         echo ""; \
-        echo "📋 故障排查:"; \
-        echo "   1. 确保AppHub服务正在运行:"; \
-        echo "      docker ps | grep apphub"; \
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+        echo "📦 从Ubuntu官方仓库安装SLURM（系统回退模式）"; \
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+        echo "⚠️  警告: 系统仓库的SLURM版本可能与AppHub版本不同"; \
         echo ""; \
-        echo "   2. 检查AppHub端口映射:"; \
-        echo "      docker port ai-infra-apphub"; \
-        echo ""; \
-        echo "   3. 测试AppHub连接:"; \
-        echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
-        echo ""; \
-        echo "   4. 使用构建脚本（推荐）:"; \
-        echo "      ./scripts/build-slurm-master.sh"; \
-        echo ""; \
+        # 删除AppHub源，使用系统源
+        rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
+        apt-get update; \
+        # 安装SLURM核心包（Ubuntu包名与SchedMD不同）
+        if apt-get install -y --no-install-recommends \
+            slurm-wlm \
+            slurm-client \
+            slurmctld \
+            slurmdbd \
+            slurmrestd 2>/dev/null || \
+           apt-get install -y --no-install-recommends \
+            slurm-wlm \
+            slurm-client \
+            slurmctld \
+            slurmdbd; then \
+            echo "✅ SLURM从系统仓库安装成功"; \
+            SLURM_INSTALLED=true; \
+            SLURM_SOURCE="System-Ubuntu"; \
+            # 显示安装的版本
+            echo "📋 系统SLURM版本:"; \
+            dpkg -l | grep -i slurm | head -10 || true; \
+        else \
+            echo "❌ 系统仓库安装也失败了"; \
+            SLURM_INSTALLED=false; \
+            SLURM_SOURCE="System-Failed"; \
+        fi; \
+    fi; \
+    \
+    # 最终检查
+    if [ "$SLURM_INSTALLED" != "true" ]; then \
+        echo "❌ SLURM安装失败（所有方法都失败了）"; \
         exit 1; \
     fi; \
     \
@@ -365,12 +434,6 @@ RUN set -eux; \
     rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
     \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
-    \
-    # 验证SLURM已成功安装
-    if [ "$SLURM_INSTALLED" != "true" ]; then \
-        echo "❌ SLURM未安装，构建失败"; \
-        exit 1; \
-    fi; \
     \
     # 创建标记文件和路径检查
     touch /opt/slurm-installed; \

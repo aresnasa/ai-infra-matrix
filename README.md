@@ -8,6 +8,16 @@
 
 > Enterprise-grade AI Infrastructure Platform - Integrating HPC Scheduling, Machine Learning Environments, Code Collaboration and Unified Monitoring
 
+---
+
+## 🚀 Live Demo
+
+🌐 **Demo URL**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+
+Welcome developers to try out the platform features! The demo environment is periodically reset, please do not store important data.
+
+---
+
 ## 🌟 Overview
 
 AI Infrastructure Matrix is an enterprise-grade HPC and AI infrastructure platform, providing Slurm cluster management, JupyterHub machine learning environments, Gitea code repositories, object storage, and Nightingale monitoring systems. Through containerized architecture and a unified web management interface, it delivers an out-of-the-box AI/HPC development and deployment solution.
@@ -375,6 +385,34 @@ docker compose up -d
 # Tag images from private registry as local images
 ./build.sh tag-images
 ```
+
+### Component Update Commands
+
+Quickly update components with a single command (build → tag → restart):
+
+```bash
+# Update a single component (build + tag + restart)
+./build.sh update backend
+./build.sh update frontend
+
+# Force rebuild without Docker cache
+./build.sh update backend --force
+
+# Update multiple components at once
+./build.sh update backend frontend nginx
+
+# Build only, without restarting the service
+./build.sh update backend --no-restart
+
+# Specify image tag version
+./build.sh update backend --tag=v0.3.9
+```
+
+**Update Workflow:**
+1. Render template (if `Dockerfile.tpl` exists)
+2. Build component image
+3. Verify image tag
+4. Restart service (stop → remove container → start)
 
 ### Database Safety Commands
 

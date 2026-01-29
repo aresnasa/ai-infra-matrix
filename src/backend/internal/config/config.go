@@ -42,6 +42,15 @@ type Config struct {
 	// AppHub 包仓库配置
 	AppHub AppHubConfig
 
+	// Keycloak IAM 配置
+	Keycloak KeycloakConfig
+
+	// Nightingale 监控配置
+	Nightingale NightingaleConfig
+
+	// ArgoCD GitOps 配置
+	ArgoCD ArgoCDConfig
+
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
 }
@@ -144,6 +153,40 @@ type AppHubConfig struct {
 	Host   string `json:"host"`   // AppHub 主机地址，默认使用 EXTERNAL_HOST
 	Port   string `json:"port"`   // AppHub 端口，默认 28080
 	Scheme string `json:"scheme"` // 协议，默认 http
+}
+
+// KeycloakConfig Keycloak IAM 配置
+type KeycloakConfig struct {
+	Enabled      bool   `json:"enabled"`
+	BaseURL      string `json:"base_url"`       // Keycloak 服务地址，如 http://keycloak:8080/auth
+	Realm        string `json:"realm"`          // Realm 名称，默认 ai-infra
+	ClientID     string `json:"client_id"`      // 客户端 ID
+	ClientSecret string `json:"client_secret"`  // 客户端密钥
+	AdminUser    string `json:"admin_user"`     // 管理员用户名
+	AdminPass    string `json:"admin_password"` // 管理员密码
+	// SSO 配置
+	SSOEnabled     bool   `json:"sso_enabled"`      // 是否启用 SSO 登录
+	SSORedirectURL string `json:"sso_redirect_url"` // SSO 回调地址
+}
+
+// NightingaleConfig Nightingale 监控配置
+type NightingaleConfig struct {
+	Enabled     bool   `json:"enabled"`
+	BaseURL     string `json:"base_url"`     // Nightingale 服务地址，如 http://nightingale:17000
+	APIUsername string `json:"api_username"` // API 认证用户名
+	APIPassword string `json:"api_password"` // API 认证密码 (MD5 哈希)
+	// 用户同步配置
+	UserSyncEnabled         bool `json:"user_sync_enabled"`
+	UserSyncIntervalSeconds int  `json:"user_sync_interval_seconds"`
+}
+
+// ArgoCDConfig ArgoCD GitOps 配置
+type ArgoCDConfig struct {
+	Enabled    bool   `json:"enabled"`
+	BaseURL    string `json:"base_url"`    // ArgoCD 服务地址
+	AdminToken string `json:"admin_token"` // ArgoCD API Token
+	// Gitea 集成配置
+	GiteaRepoURL string `json:"gitea_repo_url"` // Gitea 仓库 URL
 }
 
 // GetAppHubURL 获取 AppHub 完整 URL
@@ -284,6 +327,31 @@ func Load() (*Config, error) {
 			Host:   getEnv("EXTERNAL_HOST", "localhost"),
 			Port:   getEnv("APPHUB_PORT", "28080"),
 			Scheme: getEnv("EXTERNAL_SCHEME", "http"),
+		},
+		Keycloak: KeycloakConfig{
+			Enabled:        getEnv("KEYCLOAK_ENABLED", "false") == "true",
+			BaseURL:        getEnv("KEYCLOAK_BASE_URL", "http://keycloak:8080/auth"),
+			Realm:          getEnv("KEYCLOAK_REALM", "ai-infra"),
+			ClientID:       getEnv("KEYCLOAK_CLIENT_ID", "ai-infra-backend"),
+			ClientSecret:   getEnv("KEYCLOAK_BACKEND_CLIENT_SECRET", ""),
+			AdminUser:      getEnv("KEYCLOAK_ADMIN", "admin"),
+			AdminPass:      getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin"),
+			SSOEnabled:     getEnv("KEYCLOAK_SSO_ENABLED", "false") == "true",
+			SSORedirectURL: getEnv("KEYCLOAK_SSO_REDIRECT_URL", ""),
+		},
+		Nightingale: NightingaleConfig{
+			Enabled:                 getEnv("NIGHTINGALE_ENABLED", "true") == "true",
+			BaseURL:                 getEnv("NIGHTINGALE_BASE_URL", "http://nightingale:17000"),
+			APIUsername:             getEnv("NIGHTINGALE_API_USERNAME", "n9e-api"),
+			APIPassword:             getEnv("NIGHTINGALE_API_PASSWORD", "e10adc3949ba59abbe56e057f20f883e"),
+			UserSyncEnabled:         getEnv("NIGHTINGALE_USER_SYNC_ENABLED", "false") == "true",
+			UserSyncIntervalSeconds: getEnvAsInt("NIGHTINGALE_USER_SYNC_INTERVAL_SECONDS", 600),
+		},
+		ArgoCD: ArgoCDConfig{
+			Enabled:      getEnv("ARGOCD_ENABLED", "false") == "true",
+			BaseURL:      getEnv("ARGOCD_BASE_URL", "http://argocd-server:8080"),
+			AdminToken:   getEnv("ARGOCD_ADMIN_TOKEN", ""),
+			GiteaRepoURL: getEnv("ARGOCD_GITEA_URL", "http://gitea:3000"),
 		},
 	}
 

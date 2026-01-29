@@ -27,20 +27,22 @@ import (
 )
 
 type UserHandler struct {
-	db             *gorm.DB
-	userService    *services.UserService
-	rbacService    *services.RBACService
-	sessionService *services.SessionService
-	ldapService    *services.LDAPService
+	db                     *gorm.DB
+	userService            *services.UserService
+	rbacService            *services.RBACService
+	sessionService         *services.SessionService
+	ldapService            *services.LDAPService
+	loginProtectionService *services.LoginProtectionService
 }
 
 func NewUserHandler(db *gorm.DB) *UserHandler {
 	return &UserHandler{
-		db:             db,
-		userService:    services.NewUserService(),
-		rbacService:    services.NewRBACService(db),
-		sessionService: services.NewSessionService(),
-		ldapService:    services.NewLDAPService(db),
+		db:                     db,
+		userService:            services.NewUserService(),
+		rbacService:            services.NewRBACService(db),
+		sessionService:         services.NewSessionService(),
+		ldapService:            services.NewLDAPService(db),
+		loginProtectionService: services.NewLoginProtectionService(),
 	}
 }
 
@@ -92,6 +94,35 @@ func (h *UserHandler) ValidateLDAP(c *gin.Context) {
 	})
 }
 
+// GetRegistrationConfig 获取注册配置
+// @Summary 获取注册配置
+// @Description 获取当前系统的注册策略配置
+// @Tags 用户管理
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /auth/registration-config [get]
+func (h *UserHandler) GetRegistrationConfig(c *gin.Context) {
+	// 检查 REGISTRATION_REQUIRE_INVITATION_CODE 环境变量
+	requireInvitationCode := true // 默认值
+	val := strings.TrimSpace(strings.ToLower(os.Getenv("REGISTRATION_REQUIRE_INVITATION_CODE")))
+	if val == "false" || val == "0" || val == "no" {
+		requireInvitationCode = false
+	}
+
+	// 检查是否禁用注册
+	disableRegistration := false
+	disableVal := strings.TrimSpace(strings.ToLower(os.Getenv("DISABLE_REGISTRATION")))
+	if disableVal == "true" || disableVal == "1" || disableVal == "yes" {
+		disableRegistration = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"require_invitation_code": requireInvitationCode,
+		"disable_registration":    disableRegistration,
+		"allow_approval_mode":     !requireInvitationCode, // 允许审批模式（无邀请码注册需审批）
+	})
+}
+
 // Register 用户注册
 // @Summary 用户注册
 // @Description 创建新用户账户
@@ -110,8 +141,12 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// E2E test bypass: when enabled, skip LDAP and approval and create an active local user directly
-	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+	// E2E test bypass: when enabled AND no invitation code provided, skip LDAP and approval
+	// If invitation code is provided, always use the normal flow to properly validate and use the code
+	// 安全加固：只在非production环境且E2E_ALLOW_FAKE_LDAP=true时才允许绕过
+	goEnv := os.Getenv("GO_ENV")
+	isProduction := goEnv == "production" || goEnv == "prod"
+	if !isProduction && os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" && strings.TrimSpace(req.InvitationCode) == "" {
 		// Ensure username/email uniqueness via service call path
 		user := &models.User{
 			Username:      req.Username,
@@ -131,7 +166,12 @@ func (h *UserHandler) Register(c *gin.Context) {
 		}
 		if err := h.userService.CreateUserDirectly(user); err != nil {
 			logrus.WithError(err).Error("E2E bypass user creation failed")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			// 检查是否是用户名/邮箱已存在的错误
+			if err.Error() == "username or email already exists" || strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique constraint") {
+				c.JSON(http.StatusConflict, gin.H{"error": "用户名或邮箱已存在"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			}
 			return
 		}
 		// Assign role template if provided
@@ -144,69 +184,95 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.Register(&req)
+	// 获取客户端IP地址
+	clientIP := c.ClientIP()
+
+	user, err := h.userService.RegisterWithIP(&req, clientIP)
 	if err != nil {
 		logrus.Error("Register error:", err)
-		if err.Error() == "username or email already exists" {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		errMsg := err.Error()
+		if errMsg == "username or email already exists" {
+			c.JSON(http.StatusConflict, gin.H{"error": errMsg})
+		} else if strings.Contains(errMsg, "邀请码") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else if strings.Contains(errMsg, "待审批") {
+			c.JSON(http.StatusConflict, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user"})
 		}
 		return
 	}
-	// After local user created, try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
-	go func() {
-		// 1) LDAP user provisioning
-		if h.ldapService != nil {
-			// displayName defaults to username
-			if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
-				logrus.WithError(err).Warn("LDAP user provisioning failed")
-			} else {
-				logrus.WithField("username", req.Username).Info("LDAP user provisioned")
-			}
-		}
 
-		// 2) K8s SA/RBAC provisioning
-		// Find default cluster from DB if exists (first enabled cluster)
-		defer func() { recover() }()
-		var cluster models.KubernetesCluster
-		if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
-			ks := services.NewKubernetesService()
-			clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
-			if cerr != nil {
-				logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
-				return
-			}
-			// Namespace strategy: use department if provided, else "users"
-			ns := strings.ToLower(strings.TrimSpace(req.Department))
-			if ns == "" {
-				ns = "users"
-			}
-			if err := ks.EnsureNamespace(clientset, ns); err != nil {
-				logrus.WithError(err).Warn("Ensure namespace failed")
-			}
-			saName := fmt.Sprintf("user-%s", req.Username)
-			if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
-				logrus.WithError(err).Warn("Ensure ServiceAccount failed")
-			}
-			// Map role to ClusterRole
-			role := strings.ToLower(strings.TrimSpace(req.Role))
-			clusterRole := "view"
-			if role == "user" {
-				clusterRole = "edit"
-			}
-			if role == "admin" {
-				clusterRole = "admin"
-			}
-			rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
-			if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
-				logrus.WithError(err).Warn("Ensure RoleBinding failed")
-			}
-			logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
-		}
-	}()
+	// 根据用户激活状态返回不同的消息
+	if user.IsActive {
+		// 邀请码注册成功，用户已激活
+		c.JSON(http.StatusCreated, gin.H{
+			"message":   "注册成功！您可以直接登录系统。",
+			"user":      user,
+			"activated": true,
+		})
+	} else {
+		// 普通注册，等待审批 - 返回 202 Accepted
+		c.JSON(http.StatusAccepted, gin.H{
+			"message":           "注册申请已提交！请等待管理员审批。",
+			"requires_approval": true,
+			"activated":         false,
+		})
+	}
 
-	c.JSON(http.StatusCreated, user)
+	// After user created (if active), try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
+	if user.IsActive {
+		go func() {
+			// 1) LDAP user provisioning
+			if h.ldapService != nil {
+				// displayName defaults to username
+				if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
+					logrus.WithError(err).Warn("LDAP user provisioning failed")
+				} else {
+					logrus.WithField("username", req.Username).Info("LDAP user provisioned")
+				}
+			}
+
+			// 2) K8s SA/RBAC provisioning
+			// Find default cluster from DB if exists (first enabled cluster)
+			defer func() { recover() }()
+			var cluster models.KubernetesCluster
+			if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
+				ks := services.NewKubernetesService()
+				clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
+				if cerr != nil {
+					logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
+					return
+				}
+				// Namespace strategy: use department if provided, else "users"
+				ns := strings.ToLower(strings.TrimSpace(req.Department))
+				if ns == "" {
+					ns = "users"
+				}
+				if err := ks.EnsureNamespace(clientset, ns); err != nil {
+					logrus.WithError(err).Warn("Ensure namespace failed")
+				}
+				saName := fmt.Sprintf("user-%s", req.Username)
+				if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
+					logrus.WithError(err).Warn("Ensure ServiceAccount failed")
+				}
+				// Map role to ClusterRole
+				role := strings.ToLower(strings.TrimSpace(req.Role))
+				clusterRole := "view"
+				if role == "user" {
+					clusterRole = "edit"
+				}
+				if role == "admin" {
+					clusterRole = "admin"
+				}
+				rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
+				if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
+					logrus.WithError(err).Warn("Ensure RoleBinding failed")
+				}
+				logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
+			}
+		}()
+	}
 }
 
 // Login 用户登录
@@ -219,18 +285,49 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Success 200 {object} models.LoginResponse
 // @Failure 400 {object} map[string]interface{}
 // @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Failure 429 {object} map[string]interface{}
 // @Router /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
 	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
 		logrus.Debug("E2E bypass enabled: hybrid authentication will allow local accounts first")
 	}
+
+	// 获取客户端IP和请求信息
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
 	// 添加调试日志
 	logrus.WithFields(logrus.Fields{
-		"user_agent": c.GetHeader("User-Agent"),
+		"user_agent": userAgent,
 		"origin":     c.GetHeader("Origin"),
 		"method":     c.Request.Method,
 		"path":       c.Request.URL.Path,
+		"client_ip":  clientIP,
+		"request_id": requestID,
 	}).Info("Login request received")
+
+	// 检查IP是否被封禁
+	if isBlocked, reason, remainingSeconds, err := h.loginProtectionService.CheckIPBlocked(clientIP); err != nil {
+		logrus.WithError(err).Error("Failed to check IP block status")
+	} else if isBlocked {
+		logrus.WithFields(logrus.Fields{
+			"ip":                clientIP,
+			"reason":            reason,
+			"remaining_seconds": remainingSeconds,
+		}).Warn("Login blocked due to IP ban")
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":             "IP地址已被封禁",
+			"reason":            reason,
+			"remaining_seconds": remainingSeconds,
+			"retry_after":       remainingSeconds,
+		})
+		return
+	}
 
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -241,6 +338,26 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	logrus.WithField("username", req.Username).Info("Login attempt for user")
 
+	// 检查账号是否被锁定
+	if isLocked, remainingSeconds, err := h.loginProtectionService.CheckAccountLocked(req.Username); err != nil {
+		logrus.WithError(err).Error("Failed to check account lock status")
+	} else if isLocked {
+		logrus.WithFields(logrus.Fields{
+			"username":          req.Username,
+			"remaining_seconds": remainingSeconds,
+		}).Warn("Login blocked due to account lock")
+
+		// 记录登录尝试（账号已锁定）
+		h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, false, models.LoginFailureAccountLocked, requestID)
+
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "账号已被锁定",
+			"remaining_seconds": remainingSeconds,
+			"retry_after":       remainingSeconds,
+		})
+		return
+	}
+
 	var user *models.User
 	var err error
 
@@ -248,6 +365,18 @@ func (h *UserHandler) Login(c *gin.Context) {
 	user, err = h.performHybridAuthentication(&req)
 	if err != nil {
 		logrus.Error("Authentication error:", err)
+
+		// 记录登录失败
+		failureType := models.LoginFailureInvalidPassword
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "不存在") {
+			failureType = models.LoginFailureUserNotFound
+		} else if strings.Contains(err.Error(), "LDAP") || strings.Contains(err.Error(), "ldap") {
+			failureType = models.LoginFailureLDAPError
+		} else if strings.Contains(err.Error(), "disabled") || strings.Contains(err.Error(), "禁用") {
+			failureType = models.LoginFailureAccountDisabled
+		}
+		h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, false, failureType, requestID)
+
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -272,6 +401,9 @@ func (h *UserHandler) Login(c *gin.Context) {
 		})
 		return
 	}
+
+	// 记录登录成功
+	h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, true, "", requestID)
 
 	// 没有启用2FA，直接完成登录
 	h.completeLogin(c, user)
@@ -638,6 +770,12 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	// 检查是否为受保护用户
+	if services.IsProtectedUserByID(uint(userID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete protected system user"})
+		return
+	}
+
 	if err := h.userService.DeleteUser(uint(userID)); err != nil {
 		logrus.Error("Delete user error:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
@@ -681,6 +819,12 @@ func (h *UserHandler) ToggleUserStatus(c *gin.Context) {
 	currentUserID, _ := middleware.GetCurrentUserID(c)
 	if uint(userID) == currentUserID && !req.IsActive {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable yourself"})
+		return
+	}
+
+	// 检查是否为受保护用户（如 admin），禁止禁用
+	if !req.IsActive && services.IsProtectedUserByID(uint(userID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot disable protected system user"})
 		return
 	}
 

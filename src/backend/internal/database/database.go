@@ -353,6 +353,11 @@ func migrateTaskSchema() error {
 		&models.PermissionApprovalLog{},
 		&models.PermissionApprovalRule{},
 		&models.PermissionGrant{},
+		// 用户注册审批表
+		&models.RegistrationApproval{},
+		// 邀请码表
+		&models.InvitationCode{},
+		&models.InvitationCodeUsage{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)
@@ -933,5 +938,195 @@ func Close() error {
 		}
 	}
 
+	return nil
+}
+
+// MigrateSensitiveData 自动检测并加密未加密的敏感数据
+// 该函数在系统启动时自动调用，确保所有敏感数据都已加密
+func MigrateSensitiveData() error {
+	if CryptoService == nil {
+		logrus.Warn("Crypto service not initialized, skipping sensitive data migration")
+		return nil
+	}
+
+	logrus.Info("Checking and migrating unencrypted sensitive data...")
+
+	// 1. 迁移 ObjectStorageConfig 的 access_key 和 secret_key
+	if err := migrateObjectStorageConfigs(); err != nil {
+		logrus.WithError(err).Warn("Failed to migrate object_storage_configs")
+	}
+
+	// 2. 迁移 SlurmNode 的 username 和 password
+	if err := migrateSlurmNodeCredentials(); err != nil {
+		logrus.WithError(err).Warn("Failed to migrate slurm_nodes credentials")
+	}
+
+	// 3. 迁移 AIAssistantConfig 的 api_key 和 api_secret
+	if err := migrateAIAssistantConfigs(); err != nil {
+		logrus.WithError(err).Warn("Failed to migrate ai_assistant_configs")
+	}
+
+	logrus.Info("Sensitive data migration check completed")
+	return nil
+}
+
+// migrateObjectStorageConfigs 加密 object_storage_configs 表中未加密的敏感数据
+func migrateObjectStorageConfigs() error {
+	type ObjectStorageConfigRaw struct {
+		ID        uint
+		AccessKey string `gorm:"column:access_key"`
+		SecretKey string `gorm:"column:secret_key"`
+	}
+
+	var configs []ObjectStorageConfigRaw
+	if err := DB.Table("object_storage_configs").Select("id, access_key, secret_key").Find(&configs).Error; err != nil {
+		return fmt.Errorf("failed to query object_storage_configs: %w", err)
+	}
+
+	migratedCount := 0
+	for _, cfg := range configs {
+		needUpdate := false
+		updates := make(map[string]interface{})
+
+		// 检查并加密 access_key
+		if cfg.AccessKey != "" && !CryptoService.IsEncrypted(cfg.AccessKey) {
+			encrypted, err := CryptoService.Encrypt(cfg.AccessKey)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt access_key for config %d", cfg.ID)
+				continue
+			}
+			updates["access_key"] = encrypted
+			needUpdate = true
+		}
+
+		// 检查并加密 secret_key
+		if cfg.SecretKey != "" && !CryptoService.IsEncrypted(cfg.SecretKey) {
+			encrypted, err := CryptoService.Encrypt(cfg.SecretKey)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt secret_key for config %d", cfg.ID)
+				continue
+			}
+			updates["secret_key"] = encrypted
+			needUpdate = true
+		}
+
+		if needUpdate {
+			if err := DB.Table("object_storage_configs").Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
+				logrus.WithError(err).Warnf("Failed to update object_storage_config %d", cfg.ID)
+				continue
+			}
+			migratedCount++
+		}
+	}
+
+	if migratedCount > 0 {
+		logrus.Infof("Migrated %d object_storage_configs records (encrypted credentials)", migratedCount)
+	}
+	return nil
+}
+
+// migrateSlurmNodeCredentials 加密 slurm_nodes 表中未加密的敏感数据
+func migrateSlurmNodeCredentials() error {
+	type SlurmNodeRaw struct {
+		ID       uint
+		Username string
+		Password string
+	}
+
+	var nodes []SlurmNodeRaw
+	if err := DB.Table("slurm_nodes").Select("id, username, password").Find(&nodes).Error; err != nil {
+		return fmt.Errorf("failed to query slurm_nodes: %w", err)
+	}
+
+	migratedCount := 0
+	for _, node := range nodes {
+		needUpdate := false
+		updates := make(map[string]interface{})
+
+		if node.Username != "" && !CryptoService.IsEncrypted(node.Username) {
+			encrypted, err := CryptoService.Encrypt(node.Username)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt username for node %d", node.ID)
+				continue
+			}
+			updates["username"] = encrypted
+			needUpdate = true
+		}
+
+		if node.Password != "" && !CryptoService.IsEncrypted(node.Password) {
+			encrypted, err := CryptoService.Encrypt(node.Password)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt password for node %d", node.ID)
+				continue
+			}
+			updates["password"] = encrypted
+			needUpdate = true
+		}
+
+		if needUpdate {
+			if err := DB.Table("slurm_nodes").Where("id = ?", node.ID).Updates(updates).Error; err != nil {
+				logrus.WithError(err).Warnf("Failed to update slurm_node %d", node.ID)
+				continue
+			}
+			migratedCount++
+		}
+	}
+
+	if migratedCount > 0 {
+		logrus.Infof("Migrated %d slurm_nodes records (encrypted credentials)", migratedCount)
+	}
+	return nil
+}
+
+// migrateAIAssistantConfigs 加密 ai_assistant_configs 表中未加密的敏感数据
+func migrateAIAssistantConfigs() error {
+	type AIConfigRaw struct {
+		ID        uint
+		APIKey    string `gorm:"column:api_key"`
+		APISecret string `gorm:"column:api_secret"`
+	}
+
+	var configs []AIConfigRaw
+	if err := DB.Table("ai_assistant_configs").Select("id, api_key, api_secret").Find(&configs).Error; err != nil {
+		return fmt.Errorf("failed to query ai_assistant_configs: %w", err)
+	}
+
+	migratedCount := 0
+	for _, cfg := range configs {
+		needUpdate := false
+		updates := make(map[string]interface{})
+
+		if cfg.APIKey != "" && !CryptoService.IsEncrypted(cfg.APIKey) {
+			encrypted, err := CryptoService.Encrypt(cfg.APIKey)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt api_key for config %d", cfg.ID)
+				continue
+			}
+			updates["api_key"] = encrypted
+			needUpdate = true
+		}
+
+		if cfg.APISecret != "" && !CryptoService.IsEncrypted(cfg.APISecret) {
+			encrypted, err := CryptoService.Encrypt(cfg.APISecret)
+			if err != nil {
+				logrus.WithError(err).Warnf("Failed to encrypt api_secret for config %d", cfg.ID)
+				continue
+			}
+			updates["api_secret"] = encrypted
+			needUpdate = true
+		}
+
+		if needUpdate {
+			if err := DB.Table("ai_assistant_configs").Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
+				logrus.WithError(err).Warnf("Failed to update ai_assistant_config %d", cfg.ID)
+				continue
+			}
+			migratedCount++
+		}
+	}
+
+	if migratedCount > 0 {
+		logrus.Infof("Migrated %d ai_assistant_configs records (encrypted credentials)", migratedCount)
+	}
 	return nil
 }

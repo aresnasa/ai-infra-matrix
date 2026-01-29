@@ -17,11 +17,11 @@ upstream jupyterhub {
     server {{JUPYTERHUB_HOST}}:{{JUPYTERHUB_PORT}};
 }
 
-# SaltStack API Upstream - 负载均衡双 Master
+# SaltStack API Upstream - 单 Master 模式
 upstream salt_api {
     least_conn;
     server salt-master-1:8002 max_fails=2 fail_timeout=10s;
-    server salt-master-2:8002 max_fails=2 fail_timeout=10s backup;
+    # server salt-master-2:8002 max_fails=2 fail_timeout=10s backup;  # 可选的备份 master
 }
 
 # SeaweedFS Upstream Definitions
@@ -149,6 +149,9 @@ server {
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
     include /etc/nginx/conf.d/includes/seaweedfs.conf;
+    include /etc/nginx/conf.d/includes/kafka-ui.conf;
+    include /etc/nginx/conf.d/includes/keycloak.conf;
+    include /etc/nginx/conf.d/includes/argocd.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
@@ -206,6 +209,12 @@ server {
         proxy_set_header X-External-Host $external_host;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Cookie $http_cookie;
+        
+        # 增大代理缓冲区以处理大的响应头（如JWT token）
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+        
         set $cors_origin "*";
         if ($http_origin ~ ^https?://(.*\.)?(localhost|[\d\.]+)(:\d+)?$) { set $cors_origin $http_origin; }
         add_header Access-Control-Allow-Origin $cors_origin always;
