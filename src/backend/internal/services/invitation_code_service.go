@@ -273,7 +273,12 @@ func (s *InvitationCodeService) GetStatistics() (map[string]interface{}, error) 
 	var expiredCodes int64
 
 	s.db.Model(&models.InvitationCode{}).Count(&totalCodes)
-	s.db.Model(&models.InvitationCode{}).Where("is_active = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now()).Count(&activeCodes)
+	// 有效邀请码：is_active=true 且 未过期 且 (无使用限制 或 未用完)
+	s.db.Model(&models.InvitationCode{}).
+		Where("is_active = ?", true).
+		Where("(expires_at IS NULL OR expires_at > ?)", time.Now()).
+		Where("(max_uses = 0 OR used_count < max_uses)").
+		Count(&activeCodes)
 	s.db.Model(&models.InvitationCodeUsage{}).Count(&totalUsages)
 	// 统计已过期的邀请码（设置了过期时间且已过期的）
 	s.db.Model(&models.InvitationCode{}).Where("expires_at IS NOT NULL AND expires_at <= ?", time.Now()).Count(&expiredCodes)
