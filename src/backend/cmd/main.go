@@ -1602,7 +1602,7 @@ func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermi
 	var seaweedFSUserService services.SeaweedFSUserService
 	// 从数据库获取对象存储配置
 	var storageConfig models.ObjectStorageConfig
-	if err := database.DB.Where("storage_type = ? AND is_default = ?", "seaweedfs", true).First(&storageConfig).Error; err == nil {
+	if err := database.DB.Where("type = ? AND is_active = ?", "seaweedfs", true).First(&storageConfig).Error; err == nil {
 		var err error
 		seaweedFSUserService, err = services.NewSeaweedFSUserService(&storageConfig)
 		if err != nil {

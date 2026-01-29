@@ -571,14 +571,17 @@ func (h *ComponentPermissionHandler) RegisterHandlers(r *gin.RouterGroup) {
 	// 组件信息
 	r.GET("/components", h.ListAvailableComponents)
 
-	// 用户组件权限
-	r.GET("/users/:user_id/component-permissions", h.GetUserComponentPermissions)
-	r.PUT("/users/:user_id/component-permissions/:component", h.UpdateUserComponentPermission)
-	r.DELETE("/users/:user_id/component-permissions/:component", h.DeleteUserFromComponent)
+	// 用户组件权限 - 使用 /user-components 前缀避免与 /users/:id 冲突
+	userComponents := r.Group("/user-components")
+	{
+		userComponents.GET("/:user_id/permissions", h.GetUserComponentPermissions)
+		userComponents.PUT("/:user_id/permissions/:component", h.UpdateUserComponentPermission)
+		userComponents.DELETE("/:user_id/permissions/:component", h.DeleteUserFromComponent)
 
-	// 同步状态
-	r.GET("/users/:user_id/component-sync-status", h.GetComponentSyncStatus)
-	r.POST("/users/:user_id/component-sync/:component", h.SyncUserToComponent)
+		// 同步状态
+		userComponents.GET("/:user_id/sync-status", h.GetComponentSyncStatus)
+		userComponents.POST("/:user_id/sync/:component", h.SyncUserToComponent)
+	}
 
 	// 组件注册
 	r.POST("/component-registration", h.RegisterUserToComponents)
@@ -586,8 +589,8 @@ func (h *ComponentPermissionHandler) RegisterHandlers(r *gin.RouterGroup) {
 	r.POST("/component-sync/retry-failed", h.RetryFailedSyncs)
 
 	// 角色模板组件权限
-	r.GET("/role-templates/:role_template/component-permissions", h.GetRoleTemplateComponentPermissions)
-	r.PUT("/role-templates/:role_template_id/component-permissions", h.SetRoleTemplateComponentPermissions)
+	r.GET("/component-role-templates/:role_template/permissions", h.GetRoleTemplateComponentPermissions)
+	r.PUT("/component-role-templates/:role_template_id/permissions", h.SetRoleTemplateComponentPermissions)
 
 	logrus.Info("Component permission handlers registered")
 }
