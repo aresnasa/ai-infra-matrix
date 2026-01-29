@@ -2837,4 +2837,133 @@ export default {
     copyAllSuccess: '已复制 {count} 个有效邀请码',
     noValidCodes: '没有可复制的有效邀请码',
   },
+
+  // 集群权限管理
+  clusterPermission: {
+    title: '集群权限管理',
+    subtitle: '管理用户对 SLURM 和 SaltStack 集群的访问权限',
+    
+    // 类型
+    slurm: 'SLURM 集群',
+    saltstack: 'SaltStack 集群',
+    
+    // 权限动作
+    verbs: {
+      view: '查看',
+      submit: '提交任务',
+      manage: '管理',
+      admin: '管理员',
+      execute: '执行命令',
+      monitor: '监控',
+      scale: '扩缩容',
+      connect: '连接',
+    },
+    
+    // SLURM 权限
+    slurmPermission: {
+      title: 'SLURM 集群权限',
+      cluster: '集群',
+      partitions: '分区',
+      allPartitions: '所有分区',
+      selectedPartitions: '选定分区',
+      maxJobs: '最大并发任务数',
+      maxCPUs: '最大CPU核心数',
+      maxGPUs: '最大GPU数量',
+      maxMemoryGB: '最大内存(GB)',
+      maxWalltime: '最大运行时间',
+      priority: '优先级',
+      qos: 'QoS等级',
+      account: 'SLURM账户',
+      resourceLimits: '资源限制',
+      noLimit: '无限制',
+    },
+    
+    // SaltStack 权限
+    saltstackPermission: {
+      title: 'SaltStack 集群权限',
+      master: 'Salt Master',
+      masterAddress: 'Master地址',
+      minions: 'Minion节点',
+      allMinions: '所有Minion',
+      minionGroups: 'Minion分组',
+      minionPatterns: 'Minion匹配模式',
+      allowedFunctions: '允许的函数',
+      deniedFunctions: '禁止的函数',
+      allowDangerous: '允许危险命令',
+      maxConcurrent: '最大并发数',
+      rateLimit: '速率限制(请求/分钟)',
+    },
+    
+    // 操作
+    grant: '授权',
+    revoke: '撤销',
+    update: '更新',
+    grantPermission: '授予权限',
+    revokePermission: '撤销权限',
+    updatePermission: '更新权限',
+    
+    // 状态
+    active: '有效',
+    expired: '已过期',
+    revoked: '已撤销',
+    expiresAt: '过期时间',
+    validDays: '有效天数',
+    permanent: '永久',
+    
+    // 授权信息
+    grantedBy: '授权人',
+    grantReason: '授权原因',
+    grantedAt: '授权时间',
+    revokedBy: '撤销人',
+    revokeReason: '撤销原因',
+    revokedAt: '撤销时间',
+    
+    // 表单
+    selectUser: '选择用户',
+    selectCluster: '选择集群',
+    selectMaster: '选择 Salt Master',
+    selectVerbs: '选择权限',
+    selectPartitions: '选择分区',
+    inputReason: '输入原因',
+    reasonRequired: '请输入授权/撤销原因',
+    reasonTooShort: '原因至少需要5个字符',
+    
+    // 查询
+    myPermissions: '我的权限',
+    userPermissions: '用户权限',
+    clusterPermissions: '集群权限',
+    accessList: '可访问列表',
+    permissionLogs: '权限变更日志',
+    
+    // 提示
+    grantSuccess: '权限授予成功',
+    grantFailed: '权限授予失败',
+    revokeSuccess: '权限撤销成功',
+    revokeFailed: '权限撤销失败',
+    updateSuccess: '权限更新成功',
+    updateFailed: '权限更新失败',
+    loadFailed: '加载权限列表失败',
+    
+    // 访问拒绝
+    slurmAccessDenied: 'SLURM 集群访问被拒绝',
+    saltstackAccessDenied: 'SaltStack 集群访问被拒绝',
+    accessDenied: '访问被拒绝',
+    noPermission: '您没有访问此资源的权限',
+    contactAdmin: '请联系管理员获取相应权限',
+    
+    // 权限日志
+    logAction: {
+      grant: '授权',
+      revoke: '撤销',
+      modify: '修改',
+      expire: '过期',
+    },
+    
+    // 其他
+    noPermissions: '暂无权限记录',
+    includeExpired: '包含已过期',
+    filterByUser: '按用户筛选',
+    filterByCluster: '按集群筛选',
+    filterByStatus: '按状态筛选',
+  },
 };

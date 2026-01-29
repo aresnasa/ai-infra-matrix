@@ -1566,6 +1566,14 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// 审计日志清理（仅管理员）
 		audit.POST("/cleanup", middleware.AdminMiddleware(), auditHandler.CleanupAuditLogs)
 	}
+
+	// 集群权限管理路由（需要认证）
+	clusterPermissionHandler := handlers.NewClusterPermissionHandler(database.DB)
+	clusterPerms := api.Group("/cluster-permissions")
+	clusterPerms.Use(middleware.AuthMiddlewareWithSession())
+	{
+		clusterPermissionHandler.RegisterRoutes(clusterPerms)
+	}
 }
 
 // initComponentRegistrationService 初始化组件注册服务
