@@ -1040,6 +1040,16 @@ export default {
     embeddedUrl: 'Embedded Gitea URL',
     crossOriginWarning: 'Current URL is cross-origin, may be blocked by X-Frame-Options/CSP. Consider switching to same-origin gateway path',
     switchToSameOrigin: 'Switch to Same Origin',
+    // User sync related
+    syncUser: 'Sync User',
+    syncing: 'Syncing user...',
+    userSynced: 'User synced successfully',
+    syncFailed: 'User sync failed',
+    currentSSOUser: 'SSO User',
+    giteaUser: 'Gitea User',
+    userMismatch: 'User mismatch, please click sync',
+    noSSOUser: 'No logged in user detected',
+    unknownUser: 'Unknown',
   },
 
   // Keycloak Page
