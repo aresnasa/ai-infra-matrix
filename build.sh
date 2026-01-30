@@ -9662,6 +9662,126 @@ update_runtime_env() {
 }
 
 # ==============================================================================
+# Gitea Admin Token Management - Gitea 管理员令牌管理
+# ==============================================================================
+
+# Ensure Gitea admin token is valid
+# If invalid, generate a new one and update .env + restart backend
+# Usage: ensure_gitea_admin_token
+ensure_gitea_admin_token() {
+    log_info "Checking Gitea admin token validity..."
+    
+    # 检查 Gitea 容器是否运行
+    local gitea_container=$(docker ps --format '{{.Names}}' | grep -E "ai-infra-gitea$|gitea$" | head -1)
+    if [[ -z "$gitea_container" ]]; then
+        log_warn "  ⚠ Gitea container not running, skipping token validation"
+        return 0
+    fi
+    
+    # 等待 Gitea 完全启动
+    log_info "  Waiting for Gitea to be ready..."
+    local max_wait=60
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        if docker exec "$gitea_container" curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; then
+            log_info "  ✓ Gitea is ready"
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    
+    if [[ $waited -ge $max_wait ]]; then
+        log_warn "  ⚠ Gitea not ready after ${max_wait}s, skipping token validation"
+        return 0
+    fi
+    
+    # 获取当前配置的 token
+    local current_token="${GITEA_ADMIN_TOKEN:-}"
+    if [[ -z "$current_token" ]]; then
+        current_token=$(grep "^GITEA_ADMIN_TOKEN=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    fi
+    
+    if [[ -z "$current_token" ]]; then
+        log_warn "  ⚠ GITEA_ADMIN_TOKEN not found in environment"
+    else
+        log_info "  Current token: ${current_token:0:8}..."
+    fi
+    
+    # 测试 token 是否有效
+    local token_valid=false
+    if [[ -n "$current_token" ]]; then
+        local test_result=$(docker exec "$gitea_container" curl -sf -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $current_token" \
+            "http://localhost:3000/api/v1/admin/users?limit=1" 2>/dev/null || echo "000")
+        if [[ "$test_result" == "200" ]]; then
+            token_valid=true
+            log_info "  ✓ Gitea admin token is valid"
+        else
+            log_warn "  ⚠ Gitea admin token is invalid (HTTP $test_result)"
+        fi
+    fi
+    
+    # 如果 token 无效，生成新的
+    if [[ "$token_valid" != "true" ]]; then
+        log_info "  Generating new Gitea admin token..."
+        
+        # 生成新的 access token
+        local new_token=$(docker exec -u git "$gitea_container" \
+            gitea admin user generate-access-token \
+            --username admin \
+            --token-name "backend-api-$(date +%s)" \
+            --scopes all 2>&1 | grep -oP '(?<=: )[a-f0-9]{40}' || true)
+        
+        if [[ -z "$new_token" ]]; then
+            log_error "  ✗ Failed to generate new Gitea admin token"
+            log_info "    Please manually run:"
+            log_info "    docker exec -u git $gitea_container gitea admin user generate-access-token --username admin --token-name backend-api --scopes all"
+            return 1
+        fi
+        
+        log_info "  ✓ New token generated: ${new_token:0:8}..."
+        
+        # 更新 .env 文件
+        if [[ -f "$ENV_FILE" ]]; then
+            if grep -q "^GITEA_ADMIN_TOKEN=" "$ENV_FILE"; then
+                sed -i.bak "s|^GITEA_ADMIN_TOKEN=.*|GITEA_ADMIN_TOKEN=$new_token|" "$ENV_FILE"
+            else
+                echo "GITEA_ADMIN_TOKEN=$new_token" >> "$ENV_FILE"
+            fi
+            log_info "  ✓ Updated .env file"
+        fi
+        
+        # 重启 backend 容器以使用新 token
+        local backend_container=$(docker ps --format '{{.Names}}' | grep -E "ai-infra-backend$|backend$" | head -1)
+        if [[ -n "$backend_container" ]]; then
+            log_info "  Restarting backend to apply new token..."
+            
+            # 使用 docker compose 重启以确保环境变量更新
+            local compose_cmd=$(detect_compose_command)
+            if [[ -n "$compose_cmd" ]]; then
+                # 先停止再启动，确保环境变量重新加载
+                $compose_cmd stop backend >/dev/null 2>&1 || true
+                sleep 2
+                $compose_cmd up -d backend >/dev/null 2>&1
+                log_info "  ✓ Backend restarted with new Gitea token"
+            else
+                # 降级到 docker restart
+                docker restart "$backend_container" >/dev/null 2>&1
+                log_info "  ✓ Backend container restarted"
+            fi
+            
+            # 等待 backend 启动
+            sleep 5
+        fi
+        
+        log_info "  ✓ Gitea admin token updated successfully"
+    fi
+    
+    return 0
+}
+
+# ==============================================================================
 # Database Safety Functions - 数据库安全函数
 # ==============================================================================
 
