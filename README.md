@@ -16,7 +16,7 @@
 
 invite code
 
-A647-00BE-FF06-D91B 10
+A647-00BE-FF06-D91B   # 10times
 
 4450-D2FE-E87B-30FE
 
