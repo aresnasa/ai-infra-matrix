@@ -1,9 +1,22 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Space, Alert, Card, theme } from 'antd';
-import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Button, Space, Alert, Card, theme, Spin, message } from 'antd';
+import { ReloadOutlined, ExportOutlined, UserSwitchOutlined, SyncOutlined } from '@ant-design/icons';
 import { useI18n } from '../hooks/useI18n';
 
 const { useToken } = theme;
+
+// 获取当前登录用户
+const getCurrentUser = () => {
+  try {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      return JSON.parse(savedUser);
+    }
+  } catch (e) {
+    console.warn('Failed to parse user from localStorage:', e);
+  }
+  return null;
+};
 
 // Simple iframe wrapper to embed a Gitea instance inside the portal.
 // URL priority: window.__GITEA_URL__ (runtime) -> REACT_APP_GITEA_URL (build-time) ->
@@ -30,6 +43,18 @@ const GiteaEmbed = () => {
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
   
+  // 当前 SSO 用户
+  const [currentSSOUser, setCurrentSSOUser] = useState(() => getCurrentUser());
+  // Gitea iframe 内的用户（从 localStorage 缓存读取）
+  const [giteaUser, setGiteaUser] = useState(() => {
+    try {
+      return localStorage.getItem('gitea_current_user') || null;
+    } catch { return null; }
+  });
+  // 用户同步状态
+  const [syncing, setSyncing] = useState(false);
+  const [userMismatch, setUserMismatch] = useState(false);
+  
   // 添加语言参数到 URL，Gitea 支持 lang 参数
   const getUrlWithLang = (url) => {
     // Gitea 语言代码：zh-CN, en-US 等
@@ -39,6 +64,105 @@ const GiteaEmbed = () => {
   
   const [currentUrl, setCurrentUrl] = useState(() => getUrlWithLang(base));
   const [iframeKey, setIframeKey] = useState(0);
+
+  // 检测用户不匹配
+  useEffect(() => {
+    const ssoUsername = currentSSOUser?.username || currentSSOUser?.name;
+    if (ssoUsername && giteaUser && ssoUsername !== giteaUser) {
+      setUserMismatch(true);
+    } else {
+      setUserMismatch(false);
+    }
+  }, [currentSSOUser, giteaUser]);
+
+  // 监听 SSO 用户变化
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'user') {
+        setCurrentSSOUser(getCurrentUser());
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    
+    // 定期检查用户变化
+    const checkInterval = setInterval(() => {
+      const newUser = getCurrentUser();
+      const newUsername = newUser?.username || newUser?.name;
+      const currentUsername = currentSSOUser?.username || currentSSOUser?.name;
+      if (newUsername !== currentUsername) {
+        setCurrentSSOUser(newUser);
+      }
+    }, 2000);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(checkInterval);
+    };
+  }, [currentSSOUser]);
+
+  // 同步 Gitea 用户会话
+  const syncGiteaUser = useCallback(async () => {
+    const ssoUsername = currentSSOUser?.username || currentSSOUser?.name;
+    if (!ssoUsername) {
+      message.warning(t('gitea.noSSOUser') || '未检测到登录用户');
+      return;
+    }
+    
+    setSyncing(true);
+    try {
+      // Step 1: 调用 Gitea 登出接口清除旧会话
+      await fetch('/gitea/user/logout', { 
+        method: 'GET', 
+        credentials: 'include',
+        redirect: 'manual'
+      }).catch(() => {});
+      
+      // Step 2: 清除 Gitea 相关 cookies（通过后端代理）
+      await fetch('/gitea/_logout', { 
+        method: 'GET', 
+        credentials: 'include' 
+      }).catch(() => {});
+      
+      // Step 3: 访问 /gitea/user/login 触发 SSO 认证建立新会话
+      // Nginx 会注入当前 SSO 用户信息到请求头
+      await fetch('/gitea/user/login', {
+        method: 'GET',
+        credentials: 'include',
+        redirect: 'manual'
+      }).catch(() => {});
+      
+      // Step 4: 更新本地缓存的 Gitea 用户
+      localStorage.setItem('gitea_current_user', ssoUsername);
+      setGiteaUser(ssoUsername);
+      setUserMismatch(false);
+      
+      // Step 5: 刷新 iframe
+      setIframeKey(Date.now());
+      message.success(t('gitea.userSynced') || `已切换到用户: ${ssoUsername}`);
+      
+    } catch (error) {
+      console.error('Gitea user sync failed:', error);
+      message.error(t('gitea.syncFailed') || '用户同步失败');
+    } finally {
+      setSyncing(false);
+    }
+  }, [currentSSOUser, t]);
+
+  // 组件挂载时自动检测并同步用户
+  useEffect(() => {
+    const ssoUsername = currentSSOUser?.username || currentSSOUser?.name;
+    const cachedGiteaUser = localStorage.getItem('gitea_current_user');
+    
+    // 如果 SSO 用户存在且与缓存的 Gitea 用户不同，自动同步
+    if (ssoUsername && cachedGiteaUser && ssoUsername !== cachedGiteaUser) {
+      syncGiteaUser();
+    } else if (ssoUsername && !cachedGiteaUser) {
+      // 首次访问，记录当前用户
+      localStorage.setItem('gitea_current_user', ssoUsername);
+      setGiteaUser(ssoUsername);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 监听语言变化，刷新 iframe
   useEffect(() => {
