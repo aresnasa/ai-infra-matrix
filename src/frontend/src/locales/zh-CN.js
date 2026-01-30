@@ -2769,6 +2769,18 @@ export default {
     createTip: '创建的邀请码可用于用户注册时直接激活账户，无需管理员审批',
     codeGenerated: '生成的邀请码',
     
+    // 注册配置
+    registrationSettings: '注册设置',
+    requireInvitationCode: '强制要求邀请码',
+    requireInvitationCodeDesc: '开启后用户必须提供有效邀请码才能注册',
+    disableRegistration: '禁用注册',
+    disableRegistrationDesc: '开启后完全禁止新用户注册',
+    allowApprovalMode: '允许审批模式',
+    allowApprovalModeDesc: '允许无邀请码用户提交注册申请等待审批',
+    configUpdateSuccess: '注册配置已更新',
+    configUpdateFailed: '更新注册配置失败',
+    invitationCodeOptionalWarning: '邀请码非强制要求时，无邀请码的用户注册后需要管理员审批才能登录',
+    
     // 表格字段
     code: '邀请码',
     status: '状态',
@@ -2836,5 +2848,190 @@ export default {
     copyAll: '复制全部邀请码',
     copyAllSuccess: '已复制 {count} 个有效邀请码',
     noValidCodes: '没有可复制的有效邀请码',
+  },
+
+  // 集群权限管理
+  clusterPermission: {
+    title: '集群权限管理',
+    subtitle: '管理用户对 SLURM 和 SaltStack 集群的访问权限',
+    
+    // 类型
+    slurm: 'SLURM 集群',
+    saltstack: 'SaltStack 集群',
+    
+    // 权限动作
+    verbs: {
+      view: '查看',
+      submit: '提交任务',
+      manage: '管理',
+      admin: '管理员',
+      execute: '执行命令',
+      monitor: '监控',
+      scale: '扩缩容',
+      connect: '连接',
+    },
+    
+    // SLURM 权限
+    slurmPermission: {
+      title: 'SLURM 集群权限',
+      cluster: '集群',
+      partitions: '分区',
+      allPartitions: '所有分区',
+      selectedPartitions: '选定分区',
+      maxJobs: '最大并发任务数',
+      maxCPUs: '最大CPU核心数',
+      maxGPUs: '最大GPU数量',
+      maxMemoryGB: '最大内存(GB)',
+      maxWalltime: '最大运行时间',
+      priority: '优先级',
+      qos: 'QoS等级',
+      account: 'SLURM账户',
+      resourceLimits: '资源限制',
+      noLimit: '无限制',
+    },
+    
+    // SaltStack 权限
+    saltstackPermission: {
+      title: 'SaltStack 集群权限',
+      master: 'Salt Master',
+      masterAddress: 'Master地址',
+      minions: 'Minion节点',
+      allMinions: '所有Minion',
+      minionGroups: 'Minion分组',
+      minionPatterns: 'Minion匹配模式',
+      allowedFunctions: '允许的函数',
+      deniedFunctions: '禁止的函数',
+      allowDangerous: '允许危险命令',
+      maxConcurrent: '最大并发数',
+      rateLimit: '速率限制(请求/分钟)',
+    },
+    
+    // 操作
+    grant: '授权',
+    revoke: '撤销',
+    update: '更新',
+    grantPermission: '授予权限',
+    revokePermission: '撤销权限',
+    updatePermission: '更新权限',
+    
+    // 状态
+    active: '有效',
+    expired: '已过期',
+    revoked: '已撤销',
+    expiresAt: '过期时间',
+    validDays: '有效天数',
+    permanent: '永久',
+    
+    // 授权信息
+    grantedBy: '授权人',
+    grantReason: '授权原因',
+    grantedAt: '授权时间',
+    revokedBy: '撤销人',
+    revokeReason: '撤销原因',
+    revokedAt: '撤销时间',
+    
+    // 表单
+    selectUser: '选择用户',
+    selectCluster: '选择集群',
+    selectMaster: '选择 Salt Master',
+    selectVerbs: '选择权限',
+    selectPartitions: '选择分区',
+    inputReason: '输入原因',
+    reasonRequired: '请输入授权/撤销原因',
+    reasonTooShort: '原因至少需要5个字符',
+    
+    // 查询
+    myPermissions: '我的权限',
+    userPermissions: '用户权限',
+    clusterPermissions: '集群权限',
+    accessList: '可访问列表',
+    permissionLogs: '权限变更日志',
+    
+    // 提示
+    grantSuccess: '权限授予成功',
+    grantFailed: '权限授予失败',
+    revokeSuccess: '权限撤销成功',
+    revokeFailed: '权限撤销失败',
+    updateSuccess: '权限更新成功',
+    updateFailed: '权限更新失败',
+    loadFailed: '加载权限列表失败',
+    
+    // 访问拒绝
+    slurmAccessDenied: 'SLURM 集群访问被拒绝',
+    saltstackAccessDenied: 'SaltStack 集群访问被拒绝',
+    accessDenied: '访问被拒绝',
+    noPermission: '您没有访问此资源的权限',
+    contactAdmin: '请联系管理员获取相应权限',
+    
+    // 权限日志
+    logAction: {
+      grant: '授权',
+      revoke: '撤销',
+      modify: '修改',
+      expire: '过期',
+    },
+    
+    // 其他
+    noPermissions: '暂无权限记录',
+    includeExpired: '包含已过期',
+    filterByUser: '按用户筛选',
+    filterByCluster: '按集群筛选',
+    filterByStatus: '按状态筛选',
+
+    // Kubernetes权限
+    kubernetesPermission: {
+      title: 'Kubernetes 集群权限',
+      cluster: '集群',
+      namespaces: '命名空间',
+      allNamespaces: '所有命名空间',
+      selectedNamespaces: '选定命名空间',
+      resourceTypes: '资源类型',
+      allResources: '所有资源',
+      allowExec: '允许执行命令',
+      allowPortForward: '允许端口转发',
+      allowLogs: '允许查看日志',
+      maxPods: '最大Pod数',
+      maxCPU: '最大CPU',
+      maxMemory: '最大内存',
+      maxStorage: '最大存储',
+    },
+
+    // Ansible权限
+    ansiblePermission: {
+      title: 'Ansible 执行权限',
+      project: '项目',
+      allProjects: '所有项目',
+      inventories: '清单',
+      allInventories: '所有清单',
+      playbooks: 'Playbook',
+      allPlaybooks: '所有Playbook',
+      allowedHosts: '允许的主机',
+      deniedHosts: '禁止的主机',
+      allowDryRun: '允许Dry-Run',
+      allowProdExec: '允许生产环境执行',
+      maxConcurrent: '最大并发数',
+      environments: '允许的环境',
+    },
+
+    // 组件权限
+    componentPermission: {
+      title: '组件权限',
+      componentType: '组件类型',
+      componentId: '组件ID',
+      scope: '权限范围',
+      jupyterhub: 'JupyterHub',
+      gitea: 'Gitea',
+      monitoring: '监控系统',
+      objectStorage: '对象存储',
+      argocd: 'ArgoCD',
+      maxServers: '最大服务器数',
+      maxRepos: '最大仓库数',
+      maxBuckets: '最大桶数',
+      maxStorageGB: '最大存储(GB)',
+      allowPrivateRepo: '允许私有仓库',
+      allowAlertConfig: '允许配置告警',
+      allowSync: '允许同步',
+      allowRollback: '允许回滚',
+    },
   },
 };

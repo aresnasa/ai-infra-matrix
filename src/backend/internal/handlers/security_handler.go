@@ -49,6 +49,7 @@ func (h *SecurityHandler) AutoMigrate() error {
 		&models.SecurityAuditLog{},
 		&models.SecurityConfig{},
 		&models.IPLoginStats{},
+		&models.RegistrationConfig{},
 	)
 }
 

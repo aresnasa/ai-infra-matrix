@@ -158,6 +158,10 @@ export const invitationCodeAPI = {
   enable: (id) => api.post(`/admin/invitation-codes/${id}/enable`),
   // 删除邀请码
   delete: (id) => api.delete(`/admin/invitation-codes/${id}`),
+  // 获取注册配置（管理员）
+  getRegistrationConfig: () => api.get('/admin/registration-config'),
+  // 更新注册配置（管理员）
+  updateRegistrationConfig: (data) => api.put('/admin/registration-config', data),
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {

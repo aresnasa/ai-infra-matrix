@@ -484,9 +484,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		})
 	})
 
+	// 初始化组件注册服务（需要在 UserHandler 之前初始化）
+	componentRegistrationService := initComponentRegistrationService(cfg)
+
 	// removed early unauthenticated slurm routes; see authenticated group below
 	// 鉴权路由（公开）
-	userHandler := handlers.NewUserHandler(database.DB)
+	userHandler := handlers.NewUserHandlerWithComponentService(database.DB, componentRegistrationService)
 	// JupyterHub认证处理器（在多个地方使用）
 	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
 	// 邀请码验证处理器（公开API）
@@ -804,6 +807,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// RBAC初始化
 		admin.POST("/rbac/initialize", adminController.InitializeRBAC)
 
+		// 注册配置管理
+		admin.GET("/registration-config", userHandler.GetRegistrationConfig)
+		admin.PUT("/registration-config", userHandler.UpdateRegistrationConfig)
+
 		// 邀请码管理
 		invitationCodeHandler := handlers.NewInvitationCodeHandler()
 		invitationCodes := admin.Group("/invitation-codes")
@@ -817,8 +824,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			invitationCodes.DELETE("/:id", invitationCodeHandler.DeleteInvitationCode)
 		}
 
-		// 组件权限管理
-		componentPermissionHandler := initComponentPermissionHandler(cfg)
+		// 组件权限管理（使用已初始化的组件注册服务）
+		componentPermissionHandler := initComponentPermissionHandler(componentRegistrationService)
 		if componentPermissionHandler != nil {
 			componentPermissionHandler.RegisterHandlers(admin)
 			logrus.Info("Component permission handlers registered in admin routes")
@@ -1563,13 +1570,21 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// 审计日志清理（仅管理员）
 		audit.POST("/cleanup", middleware.AdminMiddleware(), auditHandler.CleanupAuditLogs)
 	}
+
+	// 集群权限管理路由（需要认证）
+	clusterPermissionHandler := handlers.NewClusterPermissionHandler(database.DB)
+	clusterPerms := api.Group("/cluster-permissions")
+	clusterPerms.Use(middleware.AuthMiddlewareWithSession())
+	{
+		clusterPermissionHandler.RegisterRoutes(clusterPerms)
+	}
 }
 
-// initComponentPermissionHandler 初始化组件权限处理器
-// 创建所有必要的服务并组装 ComponentRegistrationService
-func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermissionHandler {
-	logger := logrus.WithField("function", "initComponentPermissionHandler")
-	logger.Info("Initializing component permission services...")
+// initComponentRegistrationService 初始化组件注册服务
+// 创建所有必要的子服务并组装 ComponentRegistrationService
+func initComponentRegistrationService(cfg *config.Config) services.ComponentRegistrationService {
+	logger := logrus.WithField("function", "initComponentRegistrationService")
+	logger.Info("Initializing component registration services...")
 
 	// 初始化 Gitea 服务
 	var giteaService services.GiteaService
@@ -1639,7 +1654,15 @@ func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermi
 	)
 
 	logger.Info("Component registration service initialized successfully")
+	return componentService
+}
 
-	// 创建并返回处理器
+// initComponentPermissionHandler 初始化组件权限处理器
+// 使用已初始化的组件注册服务创建处理器
+func initComponentPermissionHandler(componentService services.ComponentRegistrationService) *handlers.ComponentPermissionHandler {
+	if componentService == nil {
+		logrus.Warn("Component registration service is nil, cannot create permission handler")
+		return nil
+	}
 	return handlers.NewComponentPermissionHandler(componentService)
 }

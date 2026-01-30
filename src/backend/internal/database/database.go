@@ -362,6 +362,13 @@ func migrateTaskSchema() error {
 		&models.UserComponentPermission{},
 		&models.ComponentSyncTask{},
 		&models.RoleTemplateComponentPermission{},
+		// 集群级别精细权限控制表
+		&models.SlurmClusterPermission{},
+		&models.SaltstackClusterPermission{},
+		&models.KubernetesClusterPermission{},
+		&models.AnsiblePermission{},
+		&models.ComponentPermission{},
+		&models.ClusterPermissionLog{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)

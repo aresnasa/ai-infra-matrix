@@ -59,7 +59,16 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 }
 
 // isInvitationCodeRequired 检查是否强制要求邀请码
+// 优先从数据库读取配置，fallback到环境变量
 func isInvitationCodeRequired() bool {
+	// 首先尝试从数据库读取配置
+	db := database.DB
+	var config models.RegistrationConfig
+	if err := db.First(&config).Error; err == nil {
+		return config.RequireInvitationCode
+	}
+
+	// Fallback: 从环境变量读取
 	val := strings.TrimSpace(strings.ToLower(os.Getenv("REGISTRATION_REQUIRE_INVITATION_CODE")))
 	// 默认为 true（强制要求邀请码）
 	if val == "" {

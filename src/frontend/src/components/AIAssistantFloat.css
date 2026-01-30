@@ -289,6 +289,139 @@
   margin-right: 0;
 }
 
+/* 暗黑模式 - 模型配置弹窗 (通过 className 控制) */
+.ai-model-config-modal-dark .ant-form-item-label > label {
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-input,
+.ai-model-config-modal-dark .ant-input-password,
+.ai-model-config-modal-dark .ant-input-affix-wrapper {
+  background-color: #141414 !important;
+  border-color: #434343 !important;
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-input::placeholder,
+.ai-model-config-modal-dark .ant-input-password input::placeholder {
+  color: #6b7280 !important;
+}
+
+.ai-model-config-modal-dark .ant-input-prefix {
+  color: #8c8c8c !important;
+}
+
+/* 暗黑模式下的 Radio 按钮样式 */
+.ai-model-config-modal-dark .ant-radio-wrapper {
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-radio-wrapper span:not(.ant-radio) {
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-radio-inner {
+  background-color: #141414 !important;
+  border-color: #6b7280 !important;
+}
+
+.ai-model-config-modal-dark .ant-radio-checked .ant-radio-inner {
+  border-color: #177ddc !important;
+  background-color: #141414 !important;
+}
+
+.ai-model-config-modal-dark .ant-radio-checked .ant-radio-inner::after {
+  background-color: #177ddc !important;
+}
+
+.ai-model-config-modal-dark .ant-radio-wrapper:hover .ant-radio-inner {
+  border-color: #177ddc !important;
+}
+
+/* 暗黑模式下的 Select 下拉框样式 */
+.ai-model-config-modal-dark .ant-select-selector {
+  background-color: #141414 !important;
+  border-color: #434343 !important;
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-select-selection-placeholder {
+  color: #6b7280 !important;
+}
+
+.ai-model-config-modal-dark .ant-select-arrow {
+  color: #8c8c8c !important;
+}
+
+.ai-model-config-modal-dark .ant-select-selection-item {
+  color: #d9d9d9 !important;
+}
+
+/* 暗黑模式下的 Divider 分割线样式 */
+.ai-model-config-modal-dark .ant-divider {
+  border-color: #434343 !important;
+}
+
+.ai-model-config-modal-dark .ant-divider-inner-text {
+  color: #d9d9d9 !important;
+}
+
+/* 暗黑模式下的 Collapse 折叠面板样式 */
+.ai-model-config-modal-dark .ant-collapse {
+  background-color: #1f1f1f !important;
+  border-color: #434343 !important;
+}
+
+.ai-model-config-modal-dark .ant-collapse-header {
+  color: #d9d9d9 !important;
+  background-color: #1f1f1f !important;
+}
+
+.ai-model-config-modal-dark .ant-collapse-item {
+  border-color: #434343 !important;
+}
+
+.ai-model-config-modal-dark .ant-collapse-content {
+  background-color: #1f1f1f !important;
+  border-color: #434343 !important;
+}
+
+.ai-model-config-modal-dark .ant-collapse-content-box {
+  background-color: #1f1f1f !important;
+}
+
+/* 暗黑模式下的 Card 卡片样式 */
+.ai-model-config-modal-dark .ant-card {
+  background-color: #1f1f1f !important;
+  border-color: #434343 !important;
+}
+
+.ai-model-config-modal-dark .ant-card-body {
+  color: #d9d9d9 !important;
+}
+
+/* 暗黑模式下的列表样式 */
+.ai-model-config-modal-dark .ant-list-item {
+  border-color: #303030 !important;
+}
+
+.ai-model-config-modal-dark .ant-list-item:hover {
+  background-color: #2a2a2a !important;
+}
+
+.ai-model-config-modal-dark .ant-list-item-meta-title {
+  color: #d9d9d9 !important;
+}
+
+.ai-model-config-modal-dark .ant-list-item-meta-description {
+  color: #8c8c8c !important;
+}
+
+/* 暗黑模式下的关闭按钮 */
+.ai-model-config-modal-dark .ant-modal-close-x {
+  color: #8c8c8c !important;
+}
+
 /* AI助手抽屉样式 */
 .ai-assistant-drawer .ant-drawer-body {
   padding: 0;
@@ -634,6 +767,118 @@
 
 :global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-collapse-item .ant-collapse-content {
   background-color: #1f1f1f;
+}
+
+/* 暗黑模式下的表单元素样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-form-item-label > label {
+  color: #d9d9d9 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input,
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input-password,
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input-affix-wrapper {
+  background-color: #141414 !important;
+  border-color: #434343 !important;
+  color: #d9d9d9 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input::placeholder,
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input-password input::placeholder {
+  color: #6b7280 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-input-prefix {
+  color: #8c8c8c !important;
+}
+
+/* 暗黑模式下的 Radio 按钮样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-wrapper {
+  color: #d9d9d9 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-wrapper span:not(.ant-radio) {
+  color: #d9d9d9 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-inner {
+  background-color: #141414 !important;
+  border-color: #434343 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-checked .ant-radio-inner {
+  border-color: #177ddc !important;
+  background-color: #141414 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-checked .ant-radio-inner::after {
+  background-color: #177ddc !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-radio-wrapper:hover .ant-radio-inner {
+  border-color: #177ddc !important;
+}
+
+/* 暗黑模式下的 Select 下拉框样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-select-selector {
+  background-color: #141414 !important;
+  border-color: #434343 !important;
+  color: #d9d9d9 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-select-selection-placeholder {
+  color: #6b7280 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-select-arrow {
+  color: #8c8c8c !important;
+}
+
+/* 暗黑模式下的 Divider 分割线样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-divider {
+  border-color: #434343 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-divider-inner-text {
+  color: #d9d9d9 !important;
+}
+
+/* 暗黑模式下的 Collapse 折叠面板样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-collapse {
+  background-color: #1f1f1f !important;
+  border-color: #434343 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-collapse-header {
+  color: #d9d9d9 !important;
+  background-color: #1f1f1f !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-collapse-item {
+  border-color: #434343 !important;
+}
+
+/* 暗黑模式下的 Card 卡片样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-card {
+  background-color: #1f1f1f !important;
+  border-color: #434343 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-card-body {
+  color: #d9d9d9 !important;
+}
+
+/* 暗黑模式下的 Modal 按钮样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-footer {
+  background-color: #1f1f1f !important;
+  border-top-color: #303030 !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-close-x {
+  color: #8c8c8c !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-title {
+  color: #d9d9d9 !important;
 }
 
 /* 暗黑模式下的滚动条样式 */

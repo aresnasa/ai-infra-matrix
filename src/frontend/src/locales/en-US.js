@@ -2771,6 +2771,18 @@ export default {
     createTip: 'Created invitation codes can be used for direct user registration without admin approval',
     codeGenerated: 'Generated invitation code',
     
+    // Registration settings
+    registrationSettings: 'Registration Settings',
+    requireInvitationCode: 'Require Invitation Code',
+    requireInvitationCodeDesc: 'When enabled, users must provide a valid invitation code to register',
+    disableRegistration: 'Disable Registration',
+    disableRegistrationDesc: 'When enabled, new user registration is completely disabled',
+    allowApprovalMode: 'Allow Approval Mode',
+    allowApprovalModeDesc: 'Allow users without invitation code to submit registration for approval',
+    configUpdateSuccess: 'Registration config updated',
+    configUpdateFailed: 'Failed to update registration config',
+    invitationCodeOptionalWarning: 'When invitation code is not required, users without invitation code need admin approval to login',
+    
     // Table fields
     code: 'Invitation Code',
     status: 'Status',
@@ -2838,5 +2850,190 @@ export default {
     copyAll: 'Copy All Codes',
     copyAllSuccess: 'Copied {count} valid invitation codes',
     noValidCodes: 'No valid invitation codes to copy',
+  },
+
+  // Cluster Permission Management
+  clusterPermission: {
+    title: 'Cluster Permission Management',
+    subtitle: 'Manage user access permissions for SLURM and SaltStack clusters',
+    
+    // Types
+    slurm: 'SLURM Cluster',
+    saltstack: 'SaltStack Cluster',
+    
+    // Permission Verbs
+    verbs: {
+      view: 'View',
+      submit: 'Submit Job',
+      manage: 'Manage',
+      admin: 'Admin',
+      execute: 'Execute',
+      monitor: 'Monitor',
+      scale: 'Scale',
+      connect: 'Connect',
+    },
+    
+    // SLURM Permissions
+    slurmPermission: {
+      title: 'SLURM Cluster Permissions',
+      cluster: 'Cluster',
+      partitions: 'Partitions',
+      allPartitions: 'All Partitions',
+      selectedPartitions: 'Selected Partitions',
+      maxJobs: 'Max Concurrent Jobs',
+      maxCPUs: 'Max CPU Cores',
+      maxGPUs: 'Max GPUs',
+      maxMemoryGB: 'Max Memory (GB)',
+      maxWalltime: 'Max Wall Time',
+      priority: 'Priority',
+      qos: 'QoS Level',
+      account: 'SLURM Account',
+      resourceLimits: 'Resource Limits',
+      noLimit: 'No Limit',
+    },
+    
+    // SaltStack Permissions
+    saltstackPermission: {
+      title: 'SaltStack Cluster Permissions',
+      master: 'Salt Master',
+      masterAddress: 'Master Address',
+      minions: 'Minion Nodes',
+      allMinions: 'All Minions',
+      minionGroups: 'Minion Groups',
+      minionPatterns: 'Minion Patterns',
+      allowedFunctions: 'Allowed Functions',
+      deniedFunctions: 'Denied Functions',
+      allowDangerous: 'Allow Dangerous Commands',
+      maxConcurrent: 'Max Concurrent',
+      rateLimit: 'Rate Limit (req/min)',
+    },
+    
+    // Actions
+    grant: 'Grant',
+    revoke: 'Revoke',
+    update: 'Update',
+    grantPermission: 'Grant Permission',
+    revokePermission: 'Revoke Permission',
+    updatePermission: 'Update Permission',
+    
+    // Status
+    active: 'Active',
+    expired: 'Expired',
+    revoked: 'Revoked',
+    expiresAt: 'Expires At',
+    validDays: 'Valid Days',
+    permanent: 'Permanent',
+    
+    // Grant Info
+    grantedBy: 'Granted By',
+    grantReason: 'Grant Reason',
+    grantedAt: 'Granted At',
+    revokedBy: 'Revoked By',
+    revokeReason: 'Revoke Reason',
+    revokedAt: 'Revoked At',
+    
+    // Form
+    selectUser: 'Select User',
+    selectCluster: 'Select Cluster',
+    selectMaster: 'Select Salt Master',
+    selectVerbs: 'Select Permissions',
+    selectPartitions: 'Select Partitions',
+    inputReason: 'Enter Reason',
+    reasonRequired: 'Please enter a reason',
+    reasonTooShort: 'Reason must be at least 5 characters',
+    
+    // Query
+    myPermissions: 'My Permissions',
+    userPermissions: 'User Permissions',
+    clusterPermissions: 'Cluster Permissions',
+    accessList: 'Access List',
+    permissionLogs: 'Permission Logs',
+    
+    // Messages
+    grantSuccess: 'Permission granted successfully',
+    grantFailed: 'Failed to grant permission',
+    revokeSuccess: 'Permission revoked successfully',
+    revokeFailed: 'Failed to revoke permission',
+    updateSuccess: 'Permission updated successfully',
+    updateFailed: 'Failed to update permission',
+    loadFailed: 'Failed to load permissions',
+    
+    // Access Denied
+    slurmAccessDenied: 'SLURM cluster access denied',
+    saltstackAccessDenied: 'SaltStack cluster access denied',
+    accessDenied: 'Access Denied',
+    noPermission: 'You do not have permission to access this resource',
+    contactAdmin: 'Please contact administrator for access',
+    
+    // Permission Logs
+    logAction: {
+      grant: 'Grant',
+      revoke: 'Revoke',
+      modify: 'Modify',
+      expire: 'Expire',
+    },
+    
+    // Other
+    noPermissions: 'No permission records',
+    includeExpired: 'Include Expired',
+    filterByUser: 'Filter by User',
+    filterByCluster: 'Filter by Cluster',
+    filterByStatus: 'Filter by Status',
+
+    // Kubernetes Permissions
+    kubernetesPermission: {
+      title: 'Kubernetes Cluster Permissions',
+      cluster: 'Cluster',
+      namespaces: 'Namespaces',
+      allNamespaces: 'All Namespaces',
+      selectedNamespaces: 'Selected Namespaces',
+      resourceTypes: 'Resource Types',
+      allResources: 'All Resources',
+      allowExec: 'Allow Exec',
+      allowPortForward: 'Allow Port Forward',
+      allowLogs: 'Allow Logs',
+      maxPods: 'Max Pods',
+      maxCPU: 'Max CPU',
+      maxMemory: 'Max Memory',
+      maxStorage: 'Max Storage',
+    },
+
+    // Ansible Permissions
+    ansiblePermission: {
+      title: 'Ansible Execution Permissions',
+      project: 'Project',
+      allProjects: 'All Projects',
+      inventories: 'Inventories',
+      allInventories: 'All Inventories',
+      playbooks: 'Playbooks',
+      allPlaybooks: 'All Playbooks',
+      allowedHosts: 'Allowed Hosts',
+      deniedHosts: 'Denied Hosts',
+      allowDryRun: 'Allow Dry-Run',
+      allowProdExec: 'Allow Production Execution',
+      maxConcurrent: 'Max Concurrent',
+      environments: 'Allowed Environments',
+    },
+
+    // Component Permissions
+    componentPermission: {
+      title: 'Component Permissions',
+      componentType: 'Component Type',
+      componentId: 'Component ID',
+      scope: 'Permission Scope',
+      jupyterhub: 'JupyterHub',
+      gitea: 'Gitea',
+      monitoring: 'Monitoring',
+      objectStorage: 'Object Storage',
+      argocd: 'ArgoCD',
+      maxServers: 'Max Servers',
+      maxRepos: 'Max Repositories',
+      maxBuckets: 'Max Buckets',
+      maxStorageGB: 'Max Storage (GB)',
+      allowPrivateRepo: 'Allow Private Repos',
+      allowAlertConfig: 'Allow Alert Config',
+      allowSync: 'Allow Sync',
+      allowRollback: 'Allow Rollback',
+    },
   },
 };

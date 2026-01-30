@@ -36,9 +36,18 @@ type UserHandler struct {
 }
 
 func NewUserHandler(db *gorm.DB) *UserHandler {
+	return NewUserHandlerWithComponentService(db, nil)
+}
+
+// NewUserHandlerWithComponentService 创建带组件注册服务的用户处理器
+func NewUserHandlerWithComponentService(db *gorm.DB, componentService services.ComponentRegistrationService) *UserHandler {
+	userService := services.NewUserService()
+	if componentService != nil {
+		userService.SetComponentRegistrationService(componentService)
+	}
 	return &UserHandler{
 		db:                     db,
-		userService:            services.NewUserService(),
+		userService:            userService,
 		rbacService:            services.NewRBACService(db),
 		sessionService:         services.NewSessionService(),
 		ldapService:            services.NewLDAPService(db),
@@ -96,13 +105,32 @@ func (h *UserHandler) ValidateLDAP(c *gin.Context) {
 
 // GetRegistrationConfig 获取注册配置
 // @Summary 获取注册配置
-// @Description 获取当前系统的注册策略配置
+// @Description 获取当前系统的注册策略配置（优先从数据库读取，fallback到环境变量）
 // @Tags 用户管理
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /auth/registration-config [get]
 func (h *UserHandler) GetRegistrationConfig(c *gin.Context) {
-	// 检查 REGISTRATION_REQUIRE_INVITATION_CODE 环境变量
+	// 首先尝试从数据库读取配置
+	var config models.RegistrationConfig
+	if err := h.db.First(&config).Error; err == nil {
+		// 数据库中有配置
+		c.JSON(http.StatusOK, gin.H{
+			"require_invitation_code":     config.RequireInvitationCode,
+			"disable_registration":        config.DisableRegistration,
+			"allow_approval_mode":         config.AllowApprovalMode,
+			"default_role_template":       config.DefaultRoleTemplate,
+			"invitation_code_expire_days": config.InvitationCodeExpireDays,
+			"max_invitation_code_uses":    config.MaxInvitationCodeUses,
+			"require_email_verification":  config.RequireEmailVerification,
+			"allowed_email_domains":       config.AllowedEmailDomains,
+			"registration_notice":         config.RegistrationNotice,
+			"source":                      "database",
+		})
+		return
+	}
+
+	// Fallback: 从环境变量读取配置
 	requireInvitationCode := true // 默认值
 	val := strings.TrimSpace(strings.ToLower(os.Getenv("REGISTRATION_REQUIRE_INVITATION_CODE")))
 	if val == "false" || val == "0" || val == "no" {
@@ -117,9 +145,105 @@ func (h *UserHandler) GetRegistrationConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"require_invitation_code": requireInvitationCode,
-		"disable_registration":    disableRegistration,
-		"allow_approval_mode":     !requireInvitationCode, // 允许审批模式（无邀请码注册需审批）
+		"require_invitation_code":     requireInvitationCode,
+		"disable_registration":        disableRegistration,
+		"allow_approval_mode":         !requireInvitationCode, // 允许审批模式（无邀请码注册需审批）
+		"default_role_template":       "user",
+		"invitation_code_expire_days": 7,
+		"max_invitation_code_uses":    1,
+		"require_email_verification":  false,
+		"allowed_email_domains":       "",
+		"registration_notice":         "",
+		"source":                      "environment",
+	})
+}
+
+// UpdateRegistrationConfig 更新注册配置
+// @Summary 更新注册配置
+// @Description 更新系统的注册策略配置（仅管理员）
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Param config body models.RegistrationConfig true "注册配置"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/registration-config [put]
+func (h *UserHandler) UpdateRegistrationConfig(c *gin.Context) {
+	var req struct {
+		RequireInvitationCode    *bool  `json:"require_invitation_code"`
+		DisableRegistration      *bool  `json:"disable_registration"`
+		AllowApprovalMode        *bool  `json:"allow_approval_mode"`
+		DefaultRoleTemplate      string `json:"default_role_template"`
+		InvitationCodeExpireDays *int   `json:"invitation_code_expire_days"`
+		MaxInvitationCodeUses    *int   `json:"max_invitation_code_uses"`
+		RequireEmailVerification *bool  `json:"require_email_verification"`
+		AllowedEmailDomains      string `json:"allowed_email_domains"`
+		RegistrationNotice       string `json:"registration_notice"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效: " + err.Error()})
+		return
+	}
+
+	// 获取当前用户ID
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 查找或创建配置记录
+	var config models.RegistrationConfig
+	if err := h.db.First(&config).Error; err != nil {
+		// 记录不存在，创建默认配置
+		config = *models.GetDefaultRegistrationConfig()
+	}
+
+	// 更新配置字段（只更新传入的字段）
+	if req.RequireInvitationCode != nil {
+		config.RequireInvitationCode = *req.RequireInvitationCode
+	}
+	if req.DisableRegistration != nil {
+		config.DisableRegistration = *req.DisableRegistration
+	}
+	if req.AllowApprovalMode != nil {
+		config.AllowApprovalMode = *req.AllowApprovalMode
+	}
+	if req.DefaultRoleTemplate != "" {
+		config.DefaultRoleTemplate = req.DefaultRoleTemplate
+	}
+	if req.InvitationCodeExpireDays != nil {
+		config.InvitationCodeExpireDays = *req.InvitationCodeExpireDays
+	}
+	if req.MaxInvitationCodeUses != nil {
+		config.MaxInvitationCodeUses = *req.MaxInvitationCodeUses
+	}
+	if req.RequireEmailVerification != nil {
+		config.RequireEmailVerification = *req.RequireEmailVerification
+	}
+	// 允许清空的字段
+	config.AllowedEmailDomains = req.AllowedEmailDomains
+	config.RegistrationNotice = req.RegistrationNotice
+	config.UpdatedBy = userID.(uint)
+
+	// 保存配置
+	if config.ID == 0 {
+		if err := h.db.Create(&config).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建配置失败: " + err.Error()})
+			return
+		}
+	} else {
+		if err := h.db.Save(&config).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新配置失败: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "注册配置已更新",
+		"config":  config,
 	})
 }
 
