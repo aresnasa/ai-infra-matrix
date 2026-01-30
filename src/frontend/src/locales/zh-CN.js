@@ -1039,6 +1039,16 @@ export default {
     embeddedUrl: '内嵌 Gitea 地址',
     crossOriginWarning: '当前配置为跨域地址，可能被目标站点的 X-Frame-Options/CSP 阻止内嵌。建议切换为同源网关路径',
     switchToSameOrigin: '切换为同源',
+    // 用户同步相关
+    syncUser: '同步用户',
+    syncing: '正在同步用户...',
+    userSynced: '用户同步成功',
+    syncFailed: '用户同步失败',
+    currentSSOUser: 'SSO 用户',
+    giteaUser: 'Gitea 用户',
+    userMismatch: '用户不匹配，请点击同步',
+    noSSOUser: '未检测到登录用户',
+    unknownUser: '未知',
   },
 
   // Keycloak 页面
