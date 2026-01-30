@@ -10504,6 +10504,12 @@ start_all() {
     local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c "ai-infra" || echo "0")
     log_info "Running AI-Infra containers: $running_containers"
     
+    # 【Gitea Token 自动验证与更新】确保 Gitea Admin Token 有效
+    if [[ "${GITEA_ENABLED:-true}" == "true" ]]; then
+        log_info "=== Gitea Admin Token Validation ==="
+        ensure_gitea_admin_token
+    fi
+    
     # 显示如何启用可选组件的提示
     if [[ "${KEYCLOAK_ENABLED:-false}" != "true" ]] || [[ "${SAFELINE_ENABLED:-false}" != "true" ]] || [[ "${ARGOCD_ENABLED:-false}" != "true" ]]; then
         log_info ""
