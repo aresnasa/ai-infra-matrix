@@ -289,7 +289,7 @@ func mapKeycloakRolesToLocal(keycloakRoles []string) []string {
 }
 
 // getRolePermissions 获取角色对应的权限
-func getRolePermissions(db *database.Database, roles []string) []string {
+func getRolePermissions(db *gorm.DB, roles []string) []string {
 	permissions := make([]string, 0)
 	permSet := make(map[string]bool)
 
