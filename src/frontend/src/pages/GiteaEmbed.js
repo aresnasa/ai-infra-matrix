@@ -216,6 +216,9 @@ const GiteaEmbed = () => {
     setIframeKey(Date.now());
   };
 
+  // 获取显示的用户名
+  const getSSOUsername = () => currentSSOUser?.username || currentSSOUser?.name || t('gitea.unknownUser') || '未知';
+
   const iframeStyle = {
     width: '100%',
     height: 'calc(100vh - 64px - 48px)', // align with EmbeddedJupyter
@@ -226,50 +229,85 @@ const GiteaEmbed = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        <Card
-          size="small"
-          title={<span style={{ fontSize: 14 }}>{t('gitea.title')}</span>}
-          extra={
-            <Space>
-              <Button icon={<ReloadOutlined />} onClick={reload} size="small">{t('common.refresh')}</Button>
-              <Button icon={<ExportOutlined />} onClick={openNew} size="small">{t('gitea.openNewWindow')}</Button>
-            </Space>
-          }
-          bodyStyle={{ padding: 12 }}
-        >
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <Alert
-              type="info"
-              banner
-              showIcon
-              message={<span style={{ fontSize: 12 }}>{t('gitea.embeddedUrl')}: <code>{currentUrl}</code></span>}
-              style={{ padding: '6px 8px' }}
-            />
-            {isCrossOrigin && (
+      <Spin spinning={syncing} tip={t('gitea.syncing') || '正在同步用户...'}>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Card
+            size="small"
+            title={<span style={{ fontSize: 14 }}>{t('gitea.title')}</span>}
+            extra={
+              <Space>
+                <Button 
+                  icon={<SyncOutlined spin={syncing} />} 
+                  onClick={syncGiteaUser} 
+                  size="small"
+                  type={userMismatch ? 'primary' : 'default'}
+                  danger={userMismatch}
+                  disabled={syncing}
+                >
+                  {t('gitea.syncUser') || '同步用户'}
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={reload} size="small">{t('common.refresh')}</Button>
+                <Button icon={<ExportOutlined />} onClick={openNew} size="small">{t('gitea.openNewWindow')}</Button>
+              </Space>
+            }
+            bodyStyle={{ padding: 12 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {/* 用户状态显示 */}
               <Alert
-                type="warning"
+                type={userMismatch ? 'warning' : 'success'}
                 showIcon
+                icon={<UserSwitchOutlined />}
                 message={
                   <span style={{ fontSize: 12 }}>
-                    {t('gitea.crossOriginWarning')} <code>/gitea/</code>
-                    <Button size="small" style={{ marginLeft: 8 }} onClick={switchToSameOrigin}>{t('gitea.switchToSameOrigin')}</Button>
+                    {t('gitea.currentSSOUser') || 'SSO 用户'}: <strong>{getSSOUsername()}</strong>
+                    {giteaUser && (
+                      <>
+                        {' | '}{t('gitea.giteaUser') || 'Gitea 用户'}: <strong>{giteaUser}</strong>
+                      </>
+                    )}
+                    {userMismatch && (
+                      <span style={{ color: token.colorError, marginLeft: 8 }}>
+                        ({t('gitea.userMismatch') || '用户不匹配，请点击同步'})
+                      </span>
+                    )}
                   </span>
                 }
                 style={{ padding: '6px 8px' }}
               />
-            )}
-          </Space>
-        </Card>
-        <iframe
-          ref={iframeRef}
-          key={iframeKey}
-          title="embedded-gitea"
-          src={currentUrl}
-          style={iframeStyle}
-          allow="clipboard-read; clipboard-write; fullscreen"
-        />
-      </Space>
+              
+              <Alert
+                type="info"
+                banner
+                showIcon
+                message={<span style={{ fontSize: 12 }}>{t('gitea.embeddedUrl')}: <code>{currentUrl}</code></span>}
+                style={{ padding: '6px 8px' }}
+              />
+              {isCrossOrigin && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={
+                    <span style={{ fontSize: 12 }}>
+                      {t('gitea.crossOriginWarning')} <code>/gitea/</code>
+                      <Button size="small" style={{ marginLeft: 8 }} onClick={switchToSameOrigin}>{t('gitea.switchToSameOrigin')}</Button>
+                    </span>
+                  }
+                  style={{ padding: '6px 8px' }}
+                />
+              )}
+            </Space>
+          </Card>
+          <iframe
+            ref={iframeRef}
+            key={iframeKey}
+            title="embedded-gitea"
+            src={currentUrl}
+            style={iframeStyle}
+            allow="clipboard-read; clipboard-write; fullscreen"
+          />
+        </Space>
+      </Spin>
     </div>
   );
 };
