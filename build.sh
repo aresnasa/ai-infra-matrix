@@ -12479,6 +12479,9 @@ case "$COMMAND" in
         fi
         restore_postgres_database "$ARG2" "${ARG3:-ai_infra}"
         ;;
+    gitea-token)
+        ensure_gitea_admin_token
+        ;;
     clean-images)
         clean_images "$ARG2" "${ARG3:-false}"
         ;;
