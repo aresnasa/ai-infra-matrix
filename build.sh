@@ -9727,14 +9727,19 @@ ensure_gitea_admin_token() {
         log_info "  Generating new Gitea admin token..."
         
         # 生成新的 access token
-        local new_token=$(docker exec -u git "$gitea_container" \
+        local token_output=$(docker exec -u git "$gitea_container" \
             gitea admin user generate-access-token \
             --username admin \
             --token-name "backend-api-$(date +%s)" \
-            --scopes all 2>&1 | grep -oP '(?<=: )[a-f0-9]{40}' || true)
+            --scopes all 2>&1)
+        
+        # 提取 token（兼容 Linux 和 macOS）
+        # 输出格式: "Access token was successfully created: <40-char-hex-token>"
+        local new_token=$(echo "$token_output" | grep -o '[a-f0-9]\{40\}' | head -1)
         
         if [[ -z "$new_token" ]]; then
             log_error "  ✗ Failed to generate new Gitea admin token"
+            log_info "    Output: $token_output"
             log_info "    Please manually run:"
             log_info "    docker exec -u git $gitea_container gitea admin user generate-access-token --username admin --token-name backend-api --scopes all"
             return 1
@@ -9742,10 +9747,20 @@ ensure_gitea_admin_token() {
         
         log_info "  ✓ New token generated: ${new_token:0:8}..."
         
-        # 更新 .env 文件
+        # 更新 .env 文件（兼容 Linux 和 macOS 的 sed）
         if [[ -f "$ENV_FILE" ]]; then
             if grep -q "^GITEA_ADMIN_TOKEN=" "$ENV_FILE"; then
-                sed -i.bak "s|^GITEA_ADMIN_TOKEN=.*|GITEA_ADMIN_TOKEN=$new_token|" "$ENV_FILE"
+                # 使用 update_env_variable 函数（如果可用）或兼容的 sed
+                if type update_env_variable &>/dev/null; then
+                    update_env_variable "GITEA_ADMIN_TOKEN" "$new_token"
+                else
+                    # 兼容 macOS 和 Linux 的 sed
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        sed -i '' "s|^GITEA_ADMIN_TOKEN=.*|GITEA_ADMIN_TOKEN=$new_token|" "$ENV_FILE"
+                    else
+                        sed -i "s|^GITEA_ADMIN_TOKEN=.*|GITEA_ADMIN_TOKEN=$new_token|" "$ENV_FILE"
+                    fi
+                fi
             else
                 echo "GITEA_ADMIN_TOKEN=$new_token" >> "$ENV_FILE"
             fi
