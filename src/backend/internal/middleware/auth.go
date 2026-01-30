@@ -15,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AuthMiddleware JWT认证中间件
@@ -257,13 +258,13 @@ func jitSyncUserToComponents(user *models.User, cfg *config.Config) {
 // mapKeycloakRolesToLocal 将Keycloak角色映射到本地角色
 func mapKeycloakRolesToLocal(keycloakRoles []string) []string {
 	roleMapping := map[string]string{
-		"admin":          "admin",
-		"realm-admin":    "admin",
-		"sre_admin":      "admin",
-		"developer":      "developer",
-		"devops":         "devops",
-		"viewer":         "viewer",
-		"user":           "user",
+		"admin":                  "admin",
+		"realm-admin":            "admin",
+		"sre_admin":              "admin",
+		"developer":              "developer",
+		"devops":                 "devops",
+		"viewer":                 "viewer",
+		"user":                   "user",
 		"default-roles-ai-infra": "user",
 	}
 
